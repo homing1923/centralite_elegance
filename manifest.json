@@ -1,0 +1,8 @@
+{
+  "domain": "centralite",
+  "name": "Centralite Integration",
+  "documentation": "https://github.com/pashar1/centralite_eLite",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": ["@pashar1"]
+}
