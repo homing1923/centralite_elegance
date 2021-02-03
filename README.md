@@ -23,6 +23,16 @@ On Home Assistant, make this directory and put github files in: config/custom_co
 configuration.yaml should have these added (find usb via command line using: dmesg |grep usb  ):
 
 ```
+# Logger debugging
+logger:
+  default: critical
+  logs:
+    custom_components.centralite: debug
+    custom_components.centralite.light: info
+    custom_components.centralite.switch: debug
+    custom_components.centralite.scene: critical
+
+
 homeassistant:
   customize: !include centralite_desc.yaml
 
