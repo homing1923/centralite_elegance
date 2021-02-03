@@ -1,6 +1,11 @@
 # centralite_eLite
 Centralite for home assistant (this developed using an Elegance system, will be testing on a Jetstream)
 
+I'm new to HA and this was my first every python project.  I admit I don't understand everything in how this all works.  
+Many thanks to pashar1 for the structure and working light setup so I could largely mimic what was done to get scene and switch working.
+I've tried to document with comments things I learned.  I also have a jetstream system so I'll be updating this and likely
+creating a fork of it for Jetstream.  I'm sure there are bugs -- I'm surprised I got it this far with my new python and HA experience.
+
 Centralite System Prep:
 
 You must enable a few settings in the Centralite System configuration software. 
