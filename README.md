@@ -6,6 +6,10 @@ Many thanks to pashar1 for the structure and working light setup so I could larg
 I've tried to document with comments things I learned.  I also have a jetstream system so I'll be updating this and likely
 creating a fork of it for Jetstream.  I'm sure there are bugs -- I'm surprised I got it this far with my new python and HA experience.
 
+My setup:
+Raspberry Pi 4 running on an SSD
+Home Assistant OS 5.10 (using the HA OS image for install)
+
 Centralite System Prep:
 
 You must enable a few settings in the Centralite System configuration software. 
@@ -15,9 +19,9 @@ You must enable a few settings in the Centralite System configuration software.
 - This setup uses the RS232 port on the Centralite to communicate.  An RS232->USB adapter on the HA side works for me (rPi HA OS)
 
 
-Make directory and put github files in: config/custom_components/centralite
+On Home Assistant, make this directory and put github files in: config/custom_components/centralite
 
-configuration.yaml should have these added:
+configuration.yaml should have these added (find usb via command line using: dmesg |grep usb  ):
 
 ```
 homeassistant:
@@ -34,7 +38,7 @@ In the pycentralite.py file, you need to modify these variables to support your 
 
 centralite_desc.yaml should look like this:
 
-  """ NOTE THAT Scenes do not have a friendly_name.  Their name is their only identifier """
+  """ NOTE THAT Scenes do not support friendly_name.  Their name is their only identifier """
 ```
   switch.sw044:
     friendly_name: "Office ALL On Switch"  
