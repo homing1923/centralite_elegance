@@ -126,8 +126,7 @@ class LJDevice(Entity):
         self.lj_device = lj_device
         self.controller = controller        
 
-        #! THIS is light specific, need to move this to light.py to set self._name there to not cause name issues for switches
-        #! commenting out self._name causes everything to stop working. I could not override this in light.py like I can in switch.py
+        # Original get_load_name() was light specific, moved this to light.py to set self._name there to not cause name issues for switches
         _LOGGER.debug("     LJDevice incoming name is %s", lj_device_name)
         #self._name = self.controller.get_load_name(lj_device)      
         self._name = lj_device_name

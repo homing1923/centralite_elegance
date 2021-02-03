@@ -17,8 +17,9 @@ _LOGGER.debug("Top of scene.py")
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up scenes for the Centralite platform."""
-    centralite_ = hass.data['centralite_system']
-    
+    #centralite_ = hass.data['centralite_system']
+    centralite_ = hass.data[CENTRALITE_CONTROLLER]
+        
     devices = []
     
     # .scenes() simply gets a LIST of scenes that need to be created (manually entered in pycentralite.py)
@@ -39,24 +40,21 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
         #_LOGGER.debug('      In FOR, name_on is "%s"', name_on)
         name_off = name + "-OFF"
         #_LOGGER.debug('      In FOR, name_off is "%s"', name_off)
+        
         devices.append(CentraliteScene(centralite_, i, name_on))
         devices.append(CentraliteScene(centralite_, i, name_off))        
-        
-        #! original code by original programmer
-        #devices.append(CentraliteScene(centralite_, i, name))        
-        #if not centralite.is_ignored(hass, name):
-        #    devices.append(CentraliteScene(centralite_, i, name))
-        
+                
     #_LOGGER.debug('   Before add_entities, devices has "%s"', devices) 
     add_entities(devices)
 
 
-class CentraliteScene(Scene):
+class CentraliteScene(LJDevice, Scene):
     """Representation of a single Centralite scene."""
     _LOGGER.debug('   In CentraliteScene') 
     
     def __init__(self, lj, i, name):
         """Initialize the scene."""
+        # lj is the controller?
         _LOGGER.debug('   In CentraliteScene init, lj = "%s"', lj) 
         _LOGGER.debug('   In CentraliteScene init, i = "%s"', i) 
         _LOGGER.debug('   In CentraliteScene init, name = "%s"', name) 
@@ -64,6 +62,12 @@ class CentraliteScene(Scene):
         self._lj = lj
         self._index = i
         self._name = name        
+        super().__init__(i, lj, self._name)
+        
+        #lj.activate_scene(sw_device, self.activate, self._name)  # not needed, there is no handler for scenes?
+        
+        # I'm not sure a scene is setup here to monitor any sort of trigger/state change
+              
 
     @property
     def name(self):
@@ -77,12 +81,12 @@ class CentraliteScene(Scene):
             ATTR_NUMBER: self._index
         }
 
-    def activate(self):
+    def activate(self, *args):
         """Activate the scene."""
         _LOGGER.debug('   In CentraliteScene activate, name = "%s"', self._name) 
         self._lj.activate_scene(self._index, self._name)
 
-    # unused, HA does not support OFF for a scene, commenting this out causes the scene.py not to run
+    # unused, HA does not support OFF for a scene
     #def deactivate(self):
     #    """Deactivate the scene."""
     #    self._lj.deactivate_scene(self._index)

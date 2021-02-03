@@ -53,17 +53,9 @@ class CentraliteThread(threading.Thread):
 class Centralite:
 
    # Original Coder loaded all lights/loads by default which is a lot of likely unused devices in HA with a bigger Centralite system.
-   #    CW switched code to be a list or dictionary of items to load to slim down HA
-   #FIRST_LOAD = 1  #!unused now?
-   # I'm choosing the last load that I have documented, I may have others past this number that I have not named yet or needed to control
-   #LAST_LOAD = 72 #!unused now?
-   #FIRST_SCENE = 1 #!unused now?
-   #LAST_SCENE = 41 #!unused now?
-   #FIRST_SWITCH = 1  #!unused now?
-   #LAST_BUTTON_SWITCH = 96
-   #LAST_BUTTON_SWITCH = 50 #!unused now?
-   #LAST_SWITCH = 138  
-   #LAST_SWITCH = 60 #!unused now?
+   #    CW switched code to be a list or dictionary of items to load to slim down HA.    
+   # It would be nice if these IDs were defined in YAML rather than in the code but I don't know how to do that at this point.
+   
    
    # friendly_name defined in YAML;  add the loads/light IDs you want in HA
    LOADS_LIST = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -91,7 +83,7 @@ class Centralite:
      '25': 'Master Bath and Closet Lights'
    }
       
-   # friendly_name defined in YAML;  add the loads/light IDs you want in HA
+   # friendly_name defined in YAML;  add the switch IDs you want in HA
    SWITCHES_LIST = [ 44, 46, 75]
    
    _LOGGER.info('   In pycentralite.py startup "%s"', ACTIVE_SCENES_DICT)    
@@ -114,8 +106,9 @@ class Centralite:
          #_LOGGER.debug('Send via _sendrecv "%s"', command)
          self._serial.write(command.encode('utf-8'))
 
+         # Testing note/code that's just here as a note.
          #_LOGGER.info('testing a055')
-         # adding a .encode seems to break this, the b is key
+         # adding a .encode seems to break this, the b is necessary
          #blah = "^A055"
          #self._serial.write(blah.encode('utf-8'))
          # this works too
@@ -172,7 +165,7 @@ class Centralite:
          _LOGGER.debug('   event_list is NONE, handler not run')
          pass
 
-   # Written by original coder, duplicate intent as hex2bin I think
+   # Written by original coder, duplicate intent as hex2bin, I have not validated _hex2bits but _hex2bin was validated externally to HA by me
    def _hex2bits(self, response, input_first, input_last, output_first):
       output = {}
       output_number = output_first
@@ -250,12 +243,15 @@ class Centralite:
 
    def activate_scene(self, index, scene_name):
       # HA can't do an on/off on a single scene, so each Centralite scene has two HA scenes (one for off, one for on)
+      _LOGGER.debug('IN pycentralite.py activate_scene, index is "%s"', index)
+      _LOGGER.debug('IN pycentralite.py activate_scene, scene_name is "%s"', scene_name)
+      index=int(index)
       if "-ON" in scene_name.upper():
         self._send('^C{0:03d}'.format(index))
       elif "-OFF" in scene_name.upper():
         self._send('^D{0:03d}'.format(index))
 
-   # unused, HA does not support OFF for a scene, commenting this out causes the scene.py not to run
+   # unused, HA does not support OFF for a scene
    #def deactivate_scene(self, index):
    #   self._send('^D{0:03d}'.format(index))
 
@@ -290,14 +286,18 @@ class Centralite:
    #   return self._hex2bits(response, 0, 39, Centralite.FIRST_SWITCH)
 
    def press_switch(self, index):
+      # THIS IS NOT FULLY TESTED BUT IT DOES SEND THE COMMANDS but I didn't see any activity in real life from it
+      
       # only sending a press ^I makes Centralite think a user is holding down the button causing a dim rather than an on/off
-      #! I got my system stuck ignoring my physical button I was testing with, had to hook a laptop up to the rs232 and send it a ^Jxxx or maybe ^J0xxx and it stopped.
-      #! I'm not sure there's a need to send a button press from HA since loads/lights/scenes can be triggered directly.  
-      # If you enable this, an immediate release button should be sent too?
+      #! I got my system stuck and it ignored my physical button presses for the single switch I was testing with, 
+      #  I had to hook a laptop up to the rs232 and send it a ^Jxxx or maybe ^J0xxx and it stopped.
+      
+      # I'm not sure there's a need to send a button press from HA since loads/lights/scenes can be triggered/read directly.  
+      # If you enable this, an immediate release button should be sent too?      
       
       #! It is not clear if these should be I0xxx or if Ixxx is sufficient.  Manual says just Ixxx for single system.
       #command_string = ""
-      #command_string = '^I{0:03d}'.format(index) + '^J{0:03d}'.format(index)
+      #command_string = '^I{0:03d}'.format(index) + '^J{0:03d}'.format(index)  # Centralite allows stacked commands
       #_LOGGER.debug('   IN press_switch, command is "%s"', command_string)
       #self._send(command_string)
       
@@ -319,23 +319,12 @@ class Centralite:
    def get_load_name(self, index):
       return 'L{0:03d}'.format(index)
 
-   #! with the move to a dictionary to create the names, I think this function is unused.  -- cw
-   #def get_scene_name(self, index):
-   #   return 'SC{0:03d}'.format(index)
-
    # Called by __init__.py
    def loads(self):
-      # return a list of numbers starting at FIRST_LOAD and endeding at LAST_LOAD+1
-      #return range(Centralite.FIRST_LOAD, Centralite.LAST_LOAD+1)
       return (Centralite.LOADS_LIST)
 
    def button_switches(self):
-      #return range(Centralite.FIRST_SWITCH, Centralite.LAST_BUTTON_SWITCH+1)
       return(Centralite.SWITCHES_LIST)
-
-   #! not used?
-   #def all_switches(self):
-   #   return range(Centralite.FIRST_SWITCH, Centralite.LAST_SWITCH+1)
 
    def scenes(self):
       return(Centralite.ACTIVE_SCENES_DICT)

@@ -99,5 +99,4 @@ class CentraliteSwitch(LJDevice, SwitchEntity):
 
     def turn_off(self, **kwargs):
         """Release the switch."""
-        #self._lj.release_switch(self._index)
         self.controller.release_switch(self._index)

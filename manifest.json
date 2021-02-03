@@ -1,8 +1,8 @@
 {
   "domain": "centralite",
   "name": "Centralite Integration",
-  "documentation": "https://github.com/pashar1/centralite_eLite",
+  "documentation": "https://github.com/kohai-ut/centralite_eLite",
   "requirements": [],
   "dependencies": [],
-  "codeowners": ["@pashar1"]
+  "codeowners": ["@pashar1", "@kohai-ut"]
 }

@@ -30,9 +30,11 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
     
     # add_entities() is a home assistant function, if true it triggers an update (or async_update),
     #    if false it allows the state to be discovered later (thus state is inaccurate for a bit).
-    # setting to true (need to confirm)? causes serial communication one by one for each light to pull its status, which is slow, consider changing this 
-    # to support Centralite ability to query ALL device states in one request. ALSO, HA startup is paused until this loop completes.
-    # UPDATE: It's only slow if the serial connection is timing out and it has to wait for the delay between each try.
+    # setting to true causes serial communication one by one for each light to pull its status. HA startup is paused until this loop completes.
+    
+    # Note: Centralite can report all load/light/switch status in one serial call (see hex2bin()). 
+    # This code could be reworked to do that state update but this issue only comes up on startup so it isn't a big deal.
+
     add_entities(
         [CentraliteLight(device,centralite_) for
          device in hass.data[CENTRALITE_DEVICES]['light']], True)    
@@ -47,18 +49,14 @@ class CentraliteLight(LJDevice, LightEntity):
         
         self._brightness = None
         self._state = None
-        self._name = controller.get_load_name(lj_device) #! this isn't working
+        self._name = controller.get_load_name(lj_device) 
         _LOGGER.debug("    init of the light self._name is %s", self._name)
         super().__init__(lj_device, controller, self._name)
         
-#        self.entity_id = ENTITY_ID_FORMAT.format(lj_device)    # commented out by original coder, not cw
         LJDevice.__init__(self,lj_device,controller,self._name)
 
         controller.on_load_change(lj_device, self._on_load_changed)
         
-# these are commented out by the original coder, not cw
-#        controller.on_load_activated(lj_device, self._on_load_changed)
-#        controller.on_load_deactivated(lj_device, self._on_load_changed)
 
     def _on_load_changed(self, _new_bright):
         """Handle state changes."""
