@@ -52,15 +52,28 @@ def setup(hass, base_config):
 
     hass.data[CENTRALITE_CONTROLLER] = Centralite(url)
 
+    """ Must call for each device type (light, scene, switch) """
+    # Causes light.py to run
     discovery.load_platform(hass, 'light', DOMAIN, {}, config)
+    
+    # Causes scene.py to run (commenting stops it from being run, this is the trigger)
+    discovery.load_platform(hass, 'scene', DOMAIN, {}, config)
+    
+    # Need to edit and uncomment to add functionality for switch (not yet implemented)
+    discovery.load_platform(hass, 'switch', DOMAIN, {}, config)    
 
+    #### LIGHTS
+    _LOGGER.debug("In setup about to add LIGHTS to device list")
+    
     try:
+        # get a list of numbers starting at FIRST_LOAD and endeding at LAST_LOAD+1
         all_devices = hass.data[CENTRALITE_CONTROLLER].loads()
     except RequestException:
         _LOGGER.exception("Error talking to MCP")
         return False
 
-    
+    # create a list data type of devices if the device is in all_devices?  LIGHT/LOAD SPECIFIC!
+    #? I'm not sure why this is here and then another for loop below, seems like they could be combined?
     devices = [device for device in all_devices]
     """if device not in exclude_ids]"""
 
@@ -68,7 +81,32 @@ def setup(hass, base_config):
     for device in devices:
         device_type = 'light'
         centralite_devices[device_type].append(device)
+
+    #### SCENES
+    _LOGGER.debug("In setup about to add SCENES to device list")
+    all_scenes = hass.data[CENTRALITE_CONTROLLER].scenes()
+    _LOGGER.debug('   SCENES list "%s"', all_scenes)
+        
+    # build list of scenes and append to devices
+    for _a_scene in all_scenes:
+        device_type = 'scene'
+        _LOGGER.debug('   In loop to add scene "%s"', _a_scene)
+        centralite_devices[device_type].append(_a_scene)
+
+        
+    #### SWITCHES/centralite style
+    _LOGGER.debug("In setup about to add SWITCHES to device list")
+    all_switches = hass.data[CENTRALITE_CONTROLLER].button_switches()
+    _LOGGER.debug('   SWITCHES list "%s"', all_switches)
+        
+    # build list of scenes and append to devices
+    for _a_switch in all_switches:
+        device_type = 'switch'
+        _LOGGER.debug('   In loop to add switch "%s"', _a_switch)
+        centralite_devices[device_type].append(_a_switch)
+        
     hass.data[CENTRALITE_DEVICES] = centralite_devices
+
 
     return True
 
@@ -82,13 +120,18 @@ def is_ignored(hass, name):
 class LJDevice(Entity):
     """Representation of Centralite device entity"""
 
-    def __init__(self, lj_device, controller):
+    def __init__(self, lj_device, controller, lj_device_name, *args):
         """Initialize the device"""
         _LOGGER.debug("we are in class LJDevice")
         self.lj_device = lj_device
-        self.controller = controller
+        self.controller = controller        
 
-        self._name = self.controller.get_load_name(lj_device)
+        #! THIS is light specific, need to move this to light.py to set self._name there to not cause name issues for switches
+        #! commenting out self._name causes everything to stop working. I could not override this in light.py like I can in switch.py
+        _LOGGER.debug("     LJDevice incoming name is %s", lj_device_name)
+        #self._name = self.controller.get_load_name(lj_device)      
+        self._name = lj_device_name
+        _LOGGER.debug("     LJDevice after get load name, self._name is %s", self._name)
 
         self.lj_id = LJ_ID_FORMAT.format(
             slugify(self._name), lj_device)
