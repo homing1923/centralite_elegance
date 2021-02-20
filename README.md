@@ -1,9 +1,13 @@
-# centralite_eLite
-Centralite for home assistant (this developed using an Elegance system, will be testing on a Jetstream)
+# centralite_elegance
+Centralite for home assistant 
+
+Note: 
+- this developed using an Elegance system and is only setup to handle one system, not multiple, but could be easily modified to support a multi-system
+- Jetstream support is/will be a fork of this project given the slightly different commands and device addressing structure.
 
 I'm new to HA and this was my first ever python project.  I admit I don't understand everything in how this all works. Many thanks to pashar1's github repo for the structure and working light setup so I could largely mimic what was done to modify his scene & switch skeleton he already had stubbed. I've tried to document with comments things I learned.  
 
-I also have a jetstream system so I'll be updating this and likely creating a fork of it for Jetstream.  I'm sure there are bugs -- I'm surprised I got it this far with my new python and HA experience.
+I'm sure there are bugs -- I'm surprised I got it this far with my new python and HA experience.
 
 My setup:
 Raspberry Pi 4 running on an SSD
