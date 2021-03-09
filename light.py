@@ -8,11 +8,15 @@ Checklist for creating a platform: https://developers.home-assistant.io/docs/cre
 import logging
 
 """from homeassistant.components import centralite"""
-from custom_components import centralite 
+#from custom_components import centralite 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS, SUPPORT_BRIGHTNESS, ENTITY_ID_FORMAT, LightEntity)
 
-from custom_components.centralite import (
+#from custom_components.centralite import (
+#    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
+
+# helpful HA guru on discord said to use this import approach
+from . import (
     CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
     
 _LOGGER = logging.getLogger(__name__)

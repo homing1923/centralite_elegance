@@ -1,10 +1,15 @@
 """Support for Centralite scenes."""
 import logging
 
-from custom_components import centralite
+
 from homeassistant.components.scene import Scene
 
-from custom_components.centralite import (
+#from custom_components import centralite
+#from custom_components.centralite import (
+#    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
+
+# helpful HA guru raman325 on discord said to use this import approach
+from . import (
     CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
 
 DEPENDENCIES = ['centralite']
@@ -31,14 +36,17 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
 
     scenes_dict = centralite_.scenes()
     for i in scenes_dict:
+        name = scenes_dict[i]
+        
         # i is the dictionary key
         _LOGGER.debug('      In FOR, i is "%s"', i)
-        #name = centralite_.get_scene_name(i)  # not needed with implementation of the dictionary with names
-        name = scenes_dict[i]
+        
         #_LOGGER.debug('      In FOR, name is "%s"', name)
         name_on = name + "-ON"
+        
         #_LOGGER.debug('      In FOR, name_on is "%s"', name_on)
         name_off = name + "-OFF"
+        
         #_LOGGER.debug('      In FOR, name_off is "%s"', name_off)
         
         devices.append(CentraliteScene(centralite_, i, name_on))

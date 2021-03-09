@@ -1,6 +1,7 @@
 {
   "domain": "centralite",
   "name": "Centralite Integration",
+  "version": "2021.03.01",
   "documentation": "https://github.com/kohai-ut/centralite_eLite",
   "requirements": [],
   "dependencies": [],

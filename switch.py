@@ -5,11 +5,17 @@ For more details about this platform, please refer to the documentation at
 """
 import logging
 
-from custom_components import centralite
 from homeassistant.components.switch import SwitchEntity
 
-from custom_components.centralite import (
+#from custom_components import centralite
+
+#from custom_components.centralite import (
+#    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
+
+# helpful HA guru raman325 on discord said to use this import approach
+from . import (
     CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
+
 
 DEPENDENCIES = ['centralite']
 
