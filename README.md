@@ -45,6 +45,15 @@ centralite:
   port: /dev/ttyUSB1
 ```
 
+You can also reference the port by ID instead of ttyUSBx. As an example:
+
+port: /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_D-if00-port0
+
+The upside of reference by ID is that if on reboot your usb moves from ttyUSB0 to ttyUSB1, referencing by ID doesn’t break your configuration. One warning is that if you have more than one serial-to-usb that are the same model, sometimes the manufacturer uses the same ID for every device so they aren’t unique.
+
+You can find your usb settings from a command line:
+`dmesg |grep usb`
+
 In the pycentralite.py file, you need to modify these variables to support your system and which devices you want in HA:
 - LOADS_LIST
 - ACTIVE_SCENES_DICT

@@ -59,9 +59,9 @@ def setup(hass, base_config):
     # Causes scene.py to run (commenting stops it from being run, this is the trigger)
     discovery.load_platform(hass, 'scene', DOMAIN, {}, config)
     
-    # Need to edit and uncomment to add functionality for switch (not yet implemented)
+    # Causes switch.py to run 
     discovery.load_platform(hass, 'switch', DOMAIN, {}, config)    
-
+    
     #### LIGHTS
     _LOGGER.debug("In setup about to add LIGHTS to device list")
     
@@ -104,7 +104,8 @@ def setup(hass, base_config):
         device_type = 'switch'
         _LOGGER.debug('   In loop to add switch "%s"', _a_switch)
         centralite_devices[device_type].append(_a_switch)
-        
+
+    # keep after all the device sections    
     hass.data[CENTRALITE_DEVICES] = centralite_devices
 
 
