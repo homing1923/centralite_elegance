@@ -74,6 +74,9 @@ class CentraliteSwitch(LJDevice, SwitchEntity):
 
     def _on_switch_released(self, *args):
         _LOGGER.debug("Updating released for %s", self._name)
+        _bin_string = self.controller.get_all_switch_states()
+        _LOGGER.debug("   After call to get_all_switch_states")
+        _LOGGER.debug("   _bin_string %s", _bin_string)
         self._state = False
         self.schedule_update_ha_state()
 

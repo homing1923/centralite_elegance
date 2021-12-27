@@ -20,21 +20,37 @@ class CentraliteThread(threading.Thread):
    
       while True:
          line = self._readline()
-         _LOGGER.debug('In While True, Incoming Line "%s"', line)
+         _LOGGER.debug('In While True, Incoming Line %s', line)
 
          # ^K = load level change, P=pressed switch, R=released switch                  
          if len(line)==5 and (line[0]=='P' or line[0]=='R'):
-            _LOGGER.info('  Matches P or R: %s"', line)
+            _LOGGER.info('  Matches P or R: %s', line)
             self._notify_event(line)
             continue            
-         if len(line)==7 and (line[0]=='^' and line[1]=='K'):
-            _LOGGER.info('  Matches ^K: %s"', line)
+         elif len(line)==7 and (line[0]=='^' and line[1]=='K'):
+            _LOGGER.info('  Matches ^K: %s', line)
             self._notify_event(line)
             continue
+         elif len(line)==48:
+            # Incoming status for all loads/lights 
+            _LOGGER.info('  Matches LOADS 48 hex: %s', line)
+            #! this function isn't doing anything, no logging or anything
+            #self.set_all_load_states(line)
+            continue
+         elif len(line)==96:
+            # Incoming status for all switches
+            _LOGGER.info('  Matches SWITCHES 96 hex: %s', line)            
+            continue            
+         else:
+            _LOGGER.info('  UNRECOGNIZED INPUT, line is %s', line)
+            continue
+            
          self._lastline = line
          self._recv_event.set()
 
    def _readline(self):
+      # This function requires the Elegance Centralite system to be configured to send third party CR and active load reporting to be ON. Centralite config software is wonky and isn't clear when the settings are saved.  Try a SEND from the main menu after setting them in the config menu.
+      _LOGGER.debug('  Start of _readline')
       output = ''
       while True:
          byte = self._serial.read(size=1)
@@ -43,6 +59,12 @@ class CentraliteThread(threading.Thread):
          if (byte[0] == 0x0d):
             break
          output += byte.decode('utf-8')
+         
+         if len(output) == 100: #max output is likely 96 for switch status
+            _LOGGER.info('  Broken? OUTPUT IS 100!!!!!!!!!!!!!!!!')
+            break         
+         
+      _LOGGER.debug('  _readline output is: %s', output)
       return output
 
    def get_response(self):
@@ -72,6 +94,7 @@ class Centralite:
      '5': 'Main Path',
      '6': 'Great Room Scene 1',
      '7': 'Great Room Scene 2',
+     '8': 'Outside Eaves Christmas Lights',
      '9': 'Office Scene',
      '10': 'Landscape and Outside Lights',
      '12': 'Goodnight',
@@ -80,11 +103,12 @@ class Centralite:
      '21': 'Indoor Christmas Scene',
      '22': 'Upstairs ALL',
      '24': 'Dinning Recessed and Chandelier',
-     '25': 'Master Bath and Closet Lights'
+     '25': 'Master Bath and Closet Lights',
+     '99': 'Reload Light Status'
    }
       
    # friendly_name defined in YAML;  add the switch IDs you want in HA
-   SWITCHES_LIST = [ 44, 46, 75]
+   SWITCHES_LIST = [ 44, 46, 75, 100, 106, 107]   
    
    _LOGGER.info('   In pycentralite.py startup "%s"', ACTIVE_SCENES_DICT)    
 
@@ -103,8 +127,9 @@ class Centralite:
 
    def _sendrecv(self, command):
       with self._command_lock:
-         #_LOGGER.debug('Send via _sendrecv "%s"', command)
+         _LOGGER.debug('Send via _sendrecv "%s"', command)
          self._serial.write(command.encode('utf-8'))
+         _LOGGER.debug('   Send via _sendrecv after .write ')
 
          # Testing note/code that's just here as a note.
          #_LOGGER.info('testing a055')
@@ -114,10 +139,28 @@ class Centralite:
          # this works too
          #self._serial.write(b"^a055")
          
-         result = self._thread.get_response()
-         #_LOGGER.debug('Recv "%s"', result)
+         
+         _LOGGER.debug('   Before read')
+         
+         #! The main while loop reading the RS232 seems to always capture the output.
+         #! Not all of the responses from Centralite have a leading character to indicate what the response is.
+         
+         #result = self._thread.get_response()
+         #result = self._readline()         
+                  
+         _LOGGER.debug('   Recv "%s"', result)
          
          return result
+
+# Original.  What did I break?
+#def _sendrecv(self, command):
+#      with self._command_lock:
+#         _LOGGER.info('Send "%s"', command)
+#         self._serial.write(command.encode('utf-8'))
+#         result = self._thread.get_response()
+#         _LOGGER.info('Recv "%s"', result)
+#         return result
+
 
    def _add_event(self, event_name, handler):
       _LOGGER.debug('IN _add_event, event_name is "%s"', event_name)
@@ -165,7 +208,7 @@ class Centralite:
          _LOGGER.debug('   event_list is NONE, handler not run')
          pass
 
-   # Written by original coder, duplicate intent as hex2bin, I have not validated _hex2bits but _hex2bin was validated externally to HA by me
+   # Written by original coder for eLite, same intent as hex2bin?, I have not evaluated _hex2bits
    def _hex2bits(self, response, input_first, input_last, output_first):
       output = {}
       output_number = output_first
@@ -177,7 +220,7 @@ class Centralite:
             output_number += 1
       return output
  
-   def _hex2bin(self, response):
+   def _hex2bin_loads(self, response):
       # THIS code works, but has not be validated inside HA -- cw      
       # In this case the use of the word binary simply means the bit is 0 or 1 (e.g. on/off), each bit represents a light
       
@@ -208,6 +251,43 @@ class Centralite:
           binary_bytes.append(binary_rep[::-1])
 
       binary_string = "".join(binary_bytes) # collapse into a single string, each bit represents a light/load
+
+      return binary_string
+
+   def _hex2bin_switches(self, response):
+      # Taken from loads version and tweaked for switches, which break this up in 4-digit entries instead of 6-digit.
+      
+      #!  Not validated as working yet.
+      
+      # In this case the use of the word binary simply means the bit is 0 or 1 (e.g. on/off), each bit represents a light
+      
+      hex2bin_map = {
+         "0":"0000", "1":"0001", "2":"0010", "3":"0011", "4":"0100", "5":"0101",
+         "6":"0110", "7":"0111", "8":"1000", "9":"1001", "A":"1010", "B":"1011",
+         "C":"1100", "D":"1101", "E":"1110", "F":"1111",
+      }
+      # break it into 4 character sets
+      i = 0
+      bytes = []
+      while i < len(hex):
+          bytes.append(hex[i:i+4])
+          i = i + 4
+
+      reversed_bytes = []
+      for byteset in bytes:
+          i = 0
+          newbytes = ""
+          while i < 4:
+              newbytes = newbytes + byteset[i+1] + byteset[i]
+              i = i + 2
+          reversed_bytes.append(newbytes[::-1])
+
+      binary_bytes = []
+      for byteset in reversed_bytes:
+          binary_rep = "".join(hex2bin_map[x] for x in byteset)
+          binary_bytes.append(binary_rep[::-1])
+
+      binary_string = "".join(binary_bytes) # collapse into a single string, each bit represents a switch
 
       return binary_string
 
@@ -249,7 +329,7 @@ class Centralite:
       if "-ON" in scene_name.upper():
         self._send('^C{0:03d}'.format(index))
       elif "-OFF" in scene_name.upper():
-        self._send('^D{0:03d}'.format(index))
+        self._send('^D{0:03d}'.format(index))        
 
    # unused, HA does not support OFF for a scene
    #def deactivate_scene(self, index):
@@ -264,12 +344,40 @@ class Centralite:
    # ^G: Get instant on/off status of all loads on this board
    # ^H: Get instant on/off status of all switches on this board.
 
+   #! this function under developement
+   def set_all_load_states(self, _incoming_hex):
+      _LOGGER.debug('   IN set_all_load_states, _incoming_hex is %s', _incoming_hex)
+
+      #t_lights = hass.data[CENTRALITE_CONTROLLER].loads()
+      #_LOGGER.debug('   IN set_all_load_states, hass.data loads %s', t_lights)
+      
+      #_bin_string_loads = self._hex2bin_loads(_incoming_hex)
+
+      #_LOGGER.debug('   IN set_all_load_states, after hex2bin_loads')
+      
+      # Process binary string bit-by-bit, start at 1 to use as light id below
+      #i = 1 
+      #while i < len(_bin_string_loads)+1:
+      #    _light_id = str(i).zfill(3)  # zero pad for centralight id                  
+      #    _light_id_state = _bin_string_loads[i:1] # get 1/0 from string for on/off in corresponding position
+      #    # Update device state
+      #    _LOGGER.debug('   IN set_all_load_states, centralight id should be %s', _light_id)
+      #    _LOGGER.debug('   IN set_all_load_states, centralight state should be %s', _light_id_state)
+      #              
+      #    i = i + 1      # Increment for loop      
+      return
+
+   #! this function under developement
    def get_all_load_states(self):
+      _LOGGER.debug('   IN get_all_load_states')
       # THIS CODE hasn't been validated -- where should it be triggered and when? -- cw
       response = self._sendrecv('^G')
       #return self._hex2bits(response, 0, 47, Centralite.FIRST_LOAD)  # old original code
       
       _bin_string = self._hex2bin(response)
+      _LOGGER.debug('   IN get_all_load_states, _bin_string is %s', _bin_string)
+      
+      # Where to update light state?  Should be in light.py right????
       
       # Process binary string bit-by-bit, start at 1 to use as light id below
       #i = 1 
@@ -281,9 +389,16 @@ class Centralite:
       return self._hex2bin(response)
 
    #! not used. Reads if led light on switch is active? This code is original, not adapted to CW hex2bin 
-   #def get_all_switch_states(self):
-   #   response = self._sendrecv('^H')
-   #   return self._hex2bits(response, 0, 39, Centralite.FIRST_SWITCH)
+   def get_all_switch_states(self):
+      _LOGGER.debug('   IN TOP get_all_switch_states')      
+      _bin_string = ''
+      #response = self._sendrecv('^H')
+      response = self._send('^H')
+      _LOGGER.debug('   IN TOP get_all_switch_states, AFTER _sendrecv response %s', response)
+      #return self._hex2bits(response, 0, 39, Centralite.FIRST_SWITCH)
+      #_bin_string = self._hex2bin(response)
+      _LOGGER.debug('   IN get_all_switch_states, after hex2bin and _bin_string is %s', _bin_string)      
+      return _bin_string
 
    def press_switch(self, index):
       # THIS IS NOT FULLY TESTED BUT IT DOES SEND THE COMMANDS but I didn't see any activity in real life from it
@@ -309,6 +424,10 @@ class Centralite:
 
    def release_switch(self, index):
       _LOGGER.debug('   IN release_switch, index is "%s"', index)
+      # HA never needs to press and hold a button, in my opinion. 
+      # Centralite uses a press-and-hold for dimming. In HA we can dimm by just setting the target load level.  
+      # Therefore, a release is really a simulation of a physical press/release combination.
+      self._send('^I{0:03d}'.format(index))
       self._send('^J{0:03d}'.format(index))
 
    # friendly_name defined in YAML
