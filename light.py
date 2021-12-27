@@ -15,7 +15,7 @@ from homeassistant.components.light import (
 #from custom_components.centralite import (
 #    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
 
-# helpful HA guru on discord said to use this import approach
+# helpful HA guru raman325 on discord said to use this import approach
 from . import (
     CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
     
@@ -138,8 +138,17 @@ class CentraliteLight(LJDevice, LightEntity):
 
     def update(self):
         """Retrieve the light's brightness from the Centralite system."""
+        
+        #! This causes the lights not to show up in UI.  Bug.  Oct 11, 2021 CJW
+        
         _LOGGER.debug("In light.py update() what is self %s", self)
-        self._brightness = self.controller.get_load_level(self.lj_device) / 99 * 255
+        _LOGGER.debug("In light.py update() what is self.lj_device %s", self.lj_device)
+        #self._brightness = self.controller.get_load_level(self.lj_device) / 99 * 255
+        
+        self._brightness = 0 # this works, but is overiding everything
+        
+        #! this breaks it too
+        #self.controller.get_load_level(self.lj_device)
 
     def update_ha_from_controller(self, _bin_string):
         # THIS DOESN'T DO ANYTHING YET - cw
