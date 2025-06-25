@@ -50,6 +50,12 @@ class CentraliteSwitch(LJDevice, SwitchEntity):
         self._index = sw_device
         self._state = None
         self._name = controller.get_switch_name(sw_device) # self._name required from __init__.py LJDevice init
+        
+        self._attr_unique_id = f"elegance.{self._name}"
+        
+        _LOGGER.debug("    init of the SWITCH self._name is %s", self._name)
+        _LOGGER.debug("    init of the SWITCH self._attr_unique_id is %s", self._attr_unique_id)        
+        
         super().__init__(sw_device, controller, self._name)
         
         #! this causes problems, I copied this from the light.py thinking it was needed. Seems ok without it.

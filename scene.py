@@ -69,7 +69,13 @@ class CentraliteScene(LJDevice, Scene):
         
         self._lj = lj
         self._index = i
-        self._name = name        
+        self._name = name  
+        self._attr_unique_id = f"elegance.scene{self._index}"
+        
+        _LOGGER.debug("    init of the SCENE self._name is %s", self._name)
+        _LOGGER.debug("    init of the SCENE self._index is %s", self._index)
+        _LOGGER.debug("    init of the SCENE self._attr_unique_id is %s", self._attr_unique_id)
+        
         super().__init__(i, lj, self._name)
         
         #lj.activate_scene(sw_device, self.activate, self._name)  # not needed, there is no handler for scenes?
