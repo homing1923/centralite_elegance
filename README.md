@@ -5,6 +5,7 @@ Note:
 - this code should work with an eLite system
 - this code tested using an Elegance system and is only setup to handle one system, not multiple, but could be easily modified to support a multi-system
 - Jetstream support is/will be a fork of this project given the slightly different commands and device addressing structure. (coming soon)
+- June 2025 UPDATE - I ran into needing to set a self._attr_unique_id for the lights as a voice assistant needed the alias function/voice name for it. Setting the unique_id seems to cause the centralite_desc.yaml to be ignored and the friendly name needs to be entered into the web UI for each of the lights.
 
 I'm new to HA and this was my first ever python project.  I admit I don't understand everything in how this all works. Many thanks to pashar1's github repo for the structure and working light setup so I could largely mimic what was done to modify his scene & switch skeleton he already had stubbed. I've tried to document with comments things I learned.  
 
