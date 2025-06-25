@@ -1,6 +1,6 @@
 """Support for Centralite scenes."""
 import logging
-
+import re
 
 from homeassistant.components.scene import Scene
 
@@ -70,7 +70,19 @@ class CentraliteScene(LJDevice, Scene):
         self._lj = lj
         self._index = i
         self._name = name  
-        self._attr_unique_id = f"elegance.scene{self._index}"
+        
+        # see comment above that HA doesn't support scenes receiving an OFF. I cheat and create two scenes, one for on and one for off.
+        # Regex to check if self._name ends with ON or OFF (case-insensitive), this was previously appended to the variable, now I check for it again to use for the scene unique_id
+        _LOGGER.debug('   In CentraliteScene init, before regex')
+        match = re.search(r'(ON|OFF)$', self._name, re.IGNORECASE)
+        _LOGGER.debug('   In CentraliteScene init, after regex')
+        if match:
+            _LOGGER.debug('   In CentraliteScene init, regex matched')
+            matched_text = match.group(1).upper()
+        else:
+            matched_text = ""
+        _LOGGER.debug('   In CentraliteScene init, build unique id f string')
+        self._attr_unique_id = f"elegance.scene{self._index}{matched_text}"        
         
         _LOGGER.debug("    init of the SCENE self._name is %s", self._name)
         _LOGGER.debug("    init of the SCENE self._index is %s", self._index)
