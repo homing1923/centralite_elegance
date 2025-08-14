@@ -8,7 +8,7 @@ import sys
 
 from homeassistant.components.switch import SwitchEntity
 
-from . import (
+from ... import (
     CENTRALITE_CONTROLLER,
     CENTRALITE_DEVICES,
     LJDevice,

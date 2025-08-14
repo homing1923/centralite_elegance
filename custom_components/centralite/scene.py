@@ -5,7 +5,7 @@ import re
 from homeassistant.components.scene import Scene
 from homeassistant.util import slugify
 
-from . import (
+from ... import (
     CENTRALITE_CONTROLLER,
     CENTRALITE_DEVICES,
     LJDevice,
