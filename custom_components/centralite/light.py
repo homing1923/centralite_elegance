@@ -46,20 +46,27 @@ def _lvl_255_to_99(level_0_255: int) -> int:
 async def _maybe_migrate_light_unique_ids(hass, entry):
     reg = er.async_get(hass)
     for ent in list(reg.entities.values()):
-        if ent.config_entry_id != entry.entry_id or ent.platform != DOMAIN:
+        # IMPORTANT: migrate ANY centralite light, regardless of config_entry_id
+        if ent.platform != DOMAIN:
             continue
 
+        # 1) Legacy: elegance.L1 / elegance.L001  ->  {entry_id}.load.001
         m = re.fullmatch(r"elegance\.L(\d+)", ent.unique_id)
         if m:
-            channel = int(m.group(1))
-            reg.async_update_entity(ent.entity_id, new_unique_id=f"{entry.entry_id}.load.{channel:03d}")
+            chan = int(m.group(1))
+            new_uid = f"{entry.entry_id}.load.{chan:03d}"
+            if ent.unique_id != new_uid:
+                reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
             continue
 
-        m = re.fullmatch(rf"{re.escape(entry.entry_id)}\.load\.(\d+)", ent.unique_id)
+        # 2) Interim/other entries: <anything>.load.<n> -> force current entry_id + padding
+        #    This handles entities tied to an old entry_id or unpadded formats.
+        m = re.fullmatch(r".+\.load\.(\d+)", ent.unique_id)
         if m:
-            channel = int(m.group(1))
-            reg.async_update_entity(ent.entity_id, new_unique_id=f"{entry.entry_id}.load.{channel:03d}")
-
+            chan = int(m.group(1))
+            new_uid = f"{entry.entry_id}.load.{chan:03d}"
+            if ent.unique_id != new_uid:
+                reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
