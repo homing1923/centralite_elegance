@@ -14,6 +14,7 @@ from homeassistant.components.light import (
     SUPPORT_BRIGHTNESS,
     LightEntity,
 )
+from homeassistant.helpers.entity import DeviceInfo 
 
 from . import DOMAIN
 from .pycentralite import Centralite
@@ -57,8 +58,10 @@ async def async_setup_entry(
         ctrl.get_all_load_states
     )
 
+    # PASS entry.entry_id into the entity ctor
     entities = [
         CentraliteLight(
+            entry_id=entry.entry_id,
             hass=hass,
             controller=ctrl,
             load_id=lid,
@@ -79,18 +82,28 @@ class CentraliteLight(LightEntity):
 
     def __init__(
         self,
+        entry_id: str,
         hass: HomeAssistant,
         controller: Centralite,
         load_id: int,
         initially_on: bool | None = None,
     ) -> None:
+        self._entry_id = entry_id
         self.hass = hass
         self.controller = controller
         self._id = int(load_id)
 
         # Friendly name and unique_id
         self._name = controller.get_load_name(self._id)  # e.g. "L001"
-        self._attr_unique_id = f"elegance.{self._name}"
+        self._attr_unique_id = f"{self._entry_id}.load.{self._id:03d}"  # zero-pad for stability
+
+        # Group under one device card
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Centralite Controller",
+            manufacturer="Centralite",
+            model="Elegance / Elite",
+        )
 
         # State
         if initially_on is not None:
@@ -101,7 +114,7 @@ class CentraliteLight(LightEntity):
             self._is_on = None
 
         # Subscribe to push updates (^KxxxYY)
-        controller.on_load_change(self._id, self._on_load_changed)
+        self._unsub = controller.on_load_change(self._id, self._on_load_changed)
 
         _LOGGER.debug(
             "CentraliteLight init: id=%s name=%s uid=%s seeded_on=%s",
@@ -111,7 +124,6 @@ class CentraliteLight(LightEntity):
             initially_on,
         )
 
-    # ---------- Push updates from controller ----------
     def _on_load_changed(self, new_level_str: str | None) -> None:
         """Handle level change from controller (^KxxxYY)."""
         _LOGGER.debug("Push update for %s: raw level=%s", self._name, new_level_str)
@@ -127,7 +139,6 @@ class CentraliteLight(LightEntity):
         self._is_on = (self._brightness or 0) > 0
         self.schedule_update_ha_state()
 
-    # ---------- HA properties ----------
     @property
     def name(self) -> str:
         return self._name
@@ -144,7 +155,6 @@ class CentraliteLight(LightEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         return {ATTR_NUMBER: self._id}
 
-    # ---------- Commands ----------
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
         if ATTR_BRIGHTNESS in kwargs:
@@ -182,3 +192,12 @@ class CentraliteLight(LightEntity):
             return
         self._brightness = _lvl_99_to_255(lvl_0_99)
         self._is_on = (self._brightness or 0) > 0
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from controller events when entity is removed/reloaded."""
+        unsub = getattr(self, "_unsub", None)
+        if unsub:
+            try:
+                unsub()
+            except Exception:
+                pass

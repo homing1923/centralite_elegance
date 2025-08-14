@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.helpers.entity import DeviceInfo
 
 from . import DOMAIN
 from .pycentralite import Centralite
@@ -33,20 +34,29 @@ async def async_setup_entry(
     all_ids = ctrl.button_switches()
     switch_ids = hub.switches_include or all_ids
 
-    # Seed initial LED/logic state from ^H (not strictly required for momentary behavior)
+    # Seed initial LED/logic state from ^H (optional but nice)
     initial_states: dict[int, bool] = await hass.async_add_executor_job(
         ctrl.get_all_switch_states
     )
 
-    seen = set()
-    entities = []
+    seen: set[str] = set()
+    entities: list[CentraliteSwitch] = []
     for sid in switch_ids:
-        name = ctrl.get_switch_name(sid)
+        name = ctrl.get_switch_name(sid)  # e.g., "SW075"
         uid = f"{entry.entry_id}.switch.{name}"
         if uid in seen:
             continue
         seen.add(uid)
-        entities.append(CentraliteSwitch(entry.entry_id, ctrl, sid, initially_on=...))
+        entities.append(
+            CentraliteSwitch(
+                entry_id=entry.entry_id,
+                controller=ctrl,
+                switch_id=int(sid),
+                initially_on=bool(initial_states.get(int(sid), False)),
+            )
+        )
+
+    _LOGGER.debug("centralite.switch: creating %d switch entities", len(entities))
     async_add_entities(entities, False)
 
 
@@ -71,9 +81,17 @@ class CentraliteSwitch(SwitchEntity):
         # pressed=True, released=False
         self._state: bool = bool(initially_on)
 
-        # Subscribe to push events
-        controller.on_switch_pressed(self._id, self._on_switch_pressed)
-        controller.on_switch_released(self._id, self._on_switch_released)
+        # Group under one device card
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Centralite Controller",
+            manufacturer="Centralite",
+            model="Elegance / Elite",
+        )
+
+        # Subscribe to push events; keep unsub handlers if available
+        self._unsub_press = controller.on_switch_pressed(self._id, self._on_switch_pressed)
+        self._unsub_release = controller.on_switch_released(self._id, self._on_switch_released)
 
         _LOGGER.debug(
             "CentraliteSwitch init: id=%s name=%s uid=%s seeded=%s",
@@ -116,3 +134,12 @@ class CentraliteSwitch(SwitchEntity):
         await self.hass.async_add_executor_job(self.controller.release_switch, self._id)
         self._state = False
         self.schedule_update_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from controller events on unload/reload."""
+        for unsub in (getattr(self, "_unsub_press", None), getattr(self, "_unsub_release", None)):
+            if unsub:
+                try:
+                    unsub()
+                except Exception:
+                    pass
