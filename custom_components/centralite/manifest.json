@@ -1,11 +1,10 @@
 {
   "domain": "centralite",
   "name": "Centralite Elegance/Elite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "documentation": "https://github.com/homing1923/centralite_elegance#readme",
   "issue_tracker": "https://github.com/homing1923/centralite_elegance/issues",
   "iot_class": "local_push",
   "requirements": ["pyserial>=3.5"],
-  "codeowners": ["@homing1923"],
-  "loggers": ["custom_components.centralite"]
+  "codeowners": ["@homing1923"]
 }
