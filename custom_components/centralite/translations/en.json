@@ -1,6 +1,14 @@
 {
   "title": "Centralite",
   "config": {
+    "step": {
+      "options": {
+        "description": "Selected port: {port}"
+      },
+      "manual": {
+        "description": "Enter a serial device path (e.g. /dev/serial/by-id/...) or a TCP URI (socket://host:port)."
+      }
+    },
     "error": {
       "cannot_connect": "Could not connect to the port.",
       "port_not_found": "Port not found. Check the device path or network address.",

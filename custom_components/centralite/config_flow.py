@@ -124,7 +124,12 @@ class CentraliteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional("exclude_names", default=""): selector({"text": {"multiline": True}}),
         })
         description = f"**Selected port:** `{getattr(self, '_chosen_port', '')}`"
-        return self.async_show_form(step_id="options", data_schema=schema, errors=errors, description=description)
+        return self.async_show_form(
+                step_id="options",
+                data_schema=schema,
+                errors=errors,
+                description_placeholders={"port": getattr(self, "_chosen_port", "")},
+            )
 
     @staticmethod
     @callback
