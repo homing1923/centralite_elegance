@@ -1,0 +1,10 @@
+{
+  "title": "Centralite",
+  "config": {
+    "error": {
+      "cannot_connect": "Could not connect to the port.",
+      "port_not_found": "Port not found. Check the device path or network address.",
+      "port_required": "Please select or enter a port."
+    }
+  }
+}
