@@ -23,22 +23,33 @@ ATTR_NUMBER = "number"
 
 async def _maybe_migrate_switch_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """
-    Migrate legacy switch unique_ids to the stable format:
-      old:  "elegance.SW075"
-      new:  "{entry_id}.switch.SW075"
+    Migrate legacy switch unique_ids to the stable, padded format:
+      legacy:  "elegance.SW075" or "elegance.SW75"
+      interim: "{entry_id}.switch.SW75"
+      final:   "{entry_id}.switch.SW075"
     """
     reg = er.async_get(hass)
+
     for ent in list(reg.entities.values()):
         if ent.config_entry_id != entry.entry_id or ent.platform != DOMAIN:
             continue
 
+        # 1) Legacy elegance.* → new padded
         m = re.fullmatch(r"elegance\.SW(\d+)", ent.unique_id)
-        if not m:
+        if m:
+            sw = int(m.group(1))
+            new_uid = f"{entry.entry_id}.switch.SW{sw:03d}"
+            if ent.unique_id != new_uid:
+                reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
             continue
-        sw = int(m.group(1))
-        new_uid = f"{entry.entry_id}.switch.SW{sw:03d}"
-        if ent.unique_id != new_uid:
-            reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
+
+        # 2) Interim new (un-padded) → padded
+        m = re.fullmatch(rf"{re.escape(entry.entry_id)}\.switch\.SW(\d+)", ent.unique_id)
+        if m:
+            sw = int(m.group(1))
+            new_uid = f"{entry.entry_id}.switch.SW{sw:03d}"
+            if ent.unique_id != new_uid:
+                reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
 
 
 
@@ -58,10 +69,9 @@ async def async_setup_entry(
     all_ids = ctrl.button_switches()
     switch_ids = hub.switches_include or all_ids
 
-    # Seed initial LED/logic state from ^H (optional but nice)
-    initial_states: dict[int, bool] = await hass.async_add_executor_job(
-        ctrl.get_all_switch_states
-    )
+    initial_states: dict[int, bool] = (
+        await hass.async_add_executor_job(ctrl.get_all_switch_states)
+    ) or {}
 
     seen: set[str] = set()
     entities: list[CentraliteSwitch] = []

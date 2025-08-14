@@ -45,23 +45,33 @@ def _lvl_255_to_99(level_0_255: int) -> int:
 
 async def _maybe_migrate_light_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """
-    Migrate legacy light unique_ids to the stable format:
-      old:  "elegance.L001"  or  "elegance.L1"
-      new:  "{entry_id}.load.{channel}"
+    Migrate legacy light unique_ids to the stable, padded format:
+      legacy: "elegance.L001" or "elegance.L1"
+      interim: "{entry_id}.load.1"
+      final:   "{entry_id}.load.001"
     """
     reg = er.async_get(hass)
+
     for ent in list(reg.entities.values()):
         if ent.config_entry_id != entry.entry_id or ent.platform != DOMAIN:
             continue
 
-        # Match "elegance.L001" or "elegance.L1"
+        # 1) Legacy elegance.* → new padded
         m = re.fullmatch(r"elegance\.L(\d+)", ent.unique_id)
-        if not m:
+        if m:
+            channel = int(m.group(1))
+            new_uid = f"{entry.entry_id}.load.{channel:03d}"
+            if ent.unique_id != new_uid:
+                reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
             continue
-        channel = int(m.group(1))
-        new_uid = f"{entry.entry_id}.load.{channel}"
-        if ent.unique_id != new_uid:
-            reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
+
+        # 2) Interim new (un-padded) → padded
+        m = re.fullmatch(rf"{re.escape(entry.entry_id)}\.load\.(\d+)", ent.unique_id)
+        if m:
+            channel = int(m.group(1))
+            new_uid = f"{entry.entry_id}.load.{channel:03d}"
+            if ent.unique_id != new_uid:
+                reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -77,9 +87,8 @@ async def async_setup_entry(
     load_ids = hub.loads_include or all_ids
 
     # Seed initial on/off state in one call (^G)
-    initial_states: dict[int, bool] = await hass.async_add_executor_job(
-        ctrl.get_all_load_states
-    )
+    initial_states: dict[int, bool] = (await hass.async_add_executor_job(ctrl.get_all_load_states)) or {}
+
 
     # PASS entry.entry_id into the entity ctor
     entities = [
