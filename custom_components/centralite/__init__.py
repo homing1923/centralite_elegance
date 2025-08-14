@@ -31,7 +31,8 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    data = entry.data
+    data = dict(entry.data)
+    data.update(entry.options or {})
     hub = CentraliteHub(
         hass=hass,
         url=data["port"],
