@@ -12,11 +12,15 @@ _LOGGER = logging.getLogger(__name__)
 class CentraliteThread(threading.Thread):
 
    def __init__(self, serial, notify_event):
-      threading.Thread.__init__(self, name='CentraliteThread', daemon=True)
-      self._serial = serial
-      self._lastline = None
-      self._recv_event = threading.Event()
-      self._notify_event = notify_event
+        super().__init__(name='CentraliteThread', daemon=True)
+        self._serial = serial
+        self._lastline = None
+        self._recv_event = threading.Event()
+        self._notify_event = notify_event
+        self._stop_evt = threading.Event()
+   
+   def stop(self):
+        self._stop_evt.set()
 
    def run(self):
         while True:
@@ -26,15 +30,14 @@ class CentraliteThread(threading.Thread):
 
             _LOGGER.debug('In While True, Incoming Line %s', line)
 
-            handled = False
             if len(line) == 5 and (line[0] in ('P', 'R')):
                 _LOGGER.info('  Matches P or R: %s', line)
                 self._notify_event(line)
-                handled = True
+
             elif len(line) == 7 and line.startswith('^K'):
                 _LOGGER.info('  Matches ^K: %s', line)
                 self._notify_event(line)
-                handled = True
+
             elif len(line) == 48:
                 _LOGGER.info('  Matches LOADS 48 hex: %s', line)
                 try:
@@ -51,7 +54,6 @@ class CentraliteThread(threading.Thread):
 
             elif len(line) == 96:
                 _LOGGER.info('  Matches SWITCHES 96 hex: %s', line)
-                handled = True
             else:
                 _LOGGER.info('  UNRECOGNIZED INPUT, line is %s', line)
 
@@ -137,7 +139,7 @@ class Centralite:
             timeout=SERIAL_TIMEOUT,   # add timeout
             write_timeout=SERIAL_TIMEOUT,
         )
-        self._events: dict[str, list] = {}
+        self._events: dict[str, list[callable]] = {}
         self._command_lock = threading.Lock()
         self._thread = CentraliteThread(self._serial, self._notify_event)
         self._thread.start()
@@ -161,11 +163,6 @@ class Centralite:
         _LOGGER.debug('   Recv "%s"', result)
         return result
 
-   def get_response(self):
-      got = self._recv_event.wait(timeout=WAIT_DELAY)
-      self._recv_event.clear()
-      return self._lastline if got else None
-
 # Original.  What did I break?
 #def _sendrecv(self, command):
 #      with self._command_lock:
@@ -177,12 +174,16 @@ class Centralite:
 
 
    def _add_event(self, event_name, handler):
-      _LOGGER.debug('IN _add_event, event_name is "%s"', event_name)
-      event_list = self._events.get(event_name, None)
-      if event_list == None:
-         event_list = []
-         self._events[event_name] = event_list
-      event_list.append(handler)
+      self._events.setdefault(event_name, []).append(handler)
+      def unsubscribe():
+         try:
+               self._events[event_name].remove(handler)
+               if not self._events[event_name]:
+                  self._events.pop(event_name, None)
+         except ValueError:
+               pass
+      return unsubscribe
+
 
    def _notify_event(self, event_name):
       _LOGGER.debug('Event "%s"', event_name)
@@ -435,6 +436,19 @@ class Centralite:
 
    def scenes(self):
       return(Centralite.ACTIVE_SCENES_DICT)
+   
+   def close(self):
+      """Cleanly close serial and stop thread (if stop flag exists)."""
+      try:
+         # If you add stop() on the thread, call it here.
+         if hasattr(self._thread, "stop"):
+            self._thread.stop()
+      except Exception:
+         pass
+      try:
+         self._serial.close()
+      except Exception:
+         pass
 
 
    # ---- ASCII-hex -> boolean maps (per manual) -----------------------------

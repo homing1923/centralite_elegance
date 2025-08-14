@@ -1,23 +1,23 @@
 """
-Support for Centralite lights.
-
-For more details about this platform, please refer to the documentation at
-
-Checklist for creating a platform: https://developers.home-assistant.io/docs/creating_platform_code_review/
+Support for Centralite lights (Config Entry version).
 """
-import logging
+from __future__ import annotations
 
+import logging
+from typing import Any
+
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     SUPPORT_BRIGHTNESS,
     LightEntity,
 )
+from homeassistant.helpers.typing import UNDEFINED
 
-from . import (
-    CENTRALITE_CONTROLLER,
-    CENTRALITE_DEVICES,
-    LJDevice,
-)
+from . import DOMAIN
+from .pycentralite import Centralite
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,17 +27,15 @@ ATTR_NUMBER = "number"
 def _lvl_99_to_255(level_0_99: int | None) -> int | None:
     if level_0_99 is None:
         return None
-    # Clamp and scale to 0–255
     if level_0_99 < 0:
         level_0_99 = 0
     if level_0_99 > 99:
         level_0_99 = 99
-    # Round so 99 -> 255, 1 -> ~3
+    # round so 99 -> 255
     return int(round(level_0_99 * 255 / 99))
 
 
 def _lvl_255_to_99(level_0_255: int) -> int:
-    # Clamp and scale to 0–99
     if level_0_255 < 0:
         level_0_255 = 0
     if level_0_255 > 255:
@@ -45,55 +43,78 @@ def _lvl_255_to_99(level_0_255: int) -> int:
     return int(round(level_0_255 * 99 / 255))
 
 
-# setup is called when HA is loading this platform
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    controller = hass.data[CENTRALITE_CONTROLLER]
-    light_ids = list(hass.data[CENTRALITE_DEVICES].get("light", []))
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    """Set up Centralite lights from a config entry."""
+    hub = hass.data[DOMAIN][entry.entry_id]
+    ctrl: Centralite = hub.controller
 
-    # Seed initial ON/OFF from a single ^G call:
-    initial = controller.get_all_load_states()  # {id: bool}
+    # Load list of light IDs from controller
+    light_ids = ctrl.loads()
 
-    entities = [
-        CentraliteLight(dev_id, controller, initially_on=bool(initial.get(dev_id, False)))
-        for dev_id in light_ids
+    # Seed initial ON/OFF from a single ^G call to avoid per-entity polling on startup
+    initial_states = await hass.async_add_executor_job(ctrl.get_all_load_states)
+    entities: list[CentraliteLight] = [
+        CentraliteLight(
+            hass=hass,
+            controller=ctrl,
+            load_id=lid,
+            initially_on=bool(initial_states.get(lid, False)),
+        )
+        for lid in light_ids
     ]
-    add_entities(entities, False)  # no need to force update if you seed
+
+    _LOGGER.debug("centralite.light: creating %d light entities", len(entities))
+    async_add_entities(entities, False)  # already seeded; no need to call update() immediately
 
 
-
-class CentraliteLight(LJDevice, LightEntity):
+class CentraliteLight(LightEntity):
     """Representation of a single Centralite light."""
 
-    def __init__(self, lj_device, controller, initially_on: bool | None = None):
-        """Initialize a Centralite light."""
+    _attr_supported_features = SUPPORT_BRIGHTNESS
+    _attr_should_poll = False  # push-driven via ^K events
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        controller: Centralite,
+        load_id: int,
+        initially_on: bool | None = None,
+    ) -> None:
+        self.hass = hass
+        self.controller = controller
+        self._id = int(load_id)
+
+        # Friendly name and unique_id
+        self._name = controller.get_load_name(self._id)  # e.g. "L001"
+        self._attr_unique_id = f"elegance.{self._name}"
+
+        # State
         if initially_on is not None:
-            self._brightness = 255 if initially_on else 0
-            self._state = initially_on
+            self._brightness: int | None = 255 if initially_on else 0
+            self._is_on: bool | None = initially_on
         else:
             self._brightness = None
-            self._state = None
-        
-        name = controller.get_load_name(lj_device)
+            self._is_on = None
 
-        # LJDevice will set name, ids, etc.
-        super().__init__(lj_device, controller, name)
+        # Subscribe to push updates (^KxxxYY)
+        controller.on_load_change(self._id, self._on_load_changed)
 
-        # Unique ID for registry
-        self._attr_unique_id = f"elegance.{name}"
+        _LOGGER.debug(
+            "CentraliteLight init: id=%s name=%s uid=%s seeded_on=%s",
+            self._id,
+            self._name,
+            self._attr_unique_id,
+            initially_on,
+        )
 
-        # Subscribe to push notifications from controller (^KxxxYY events)
-        controller.on_load_change(lj_device, self._on_load_changed)
-
-        _LOGGER.debug("CentraliteLight init: id=%s name=%s uid=%s",
-                      lj_device, name, self._attr_unique_id)
-
-    # ---------- Push update path ----------
-    def _on_load_changed(self, new_level_str: str | None):
+    # ---------- Push updates from controller ----------
+    def _on_load_changed(self, new_level_str: str | None) -> None:
         """Handle level change from controller (^KxxxYY)."""
         _LOGGER.debug("Push update for %s: raw level=%s", self._name, new_level_str)
         if not new_level_str:
             return
-
         try:
             lvl_0_99 = int(new_level_str)
         except (TypeError, ValueError):
@@ -101,16 +122,12 @@ class CentraliteLight(LJDevice, LightEntity):
             return
 
         self._brightness = _lvl_99_to_255(lvl_0_99)
-        self._state = (self._brightness or 0) > 0
+        self._is_on = (self._brightness or 0) > 0
         self.schedule_update_ha_state()
 
-    # ---------- HA-required properties ----------
+    # ---------- HA properties ----------
     @property
-    def supported_features(self):
-        return SUPPORT_BRIGHTNESS
-
-    @property
-    def name(self):
+    def name(self) -> str:
         return self._name
 
     @property
@@ -119,48 +136,45 @@ class CentraliteLight(LJDevice, LightEntity):
 
     @property
     def is_on(self) -> bool | None:
-        if self._brightness is None:
-            return None  # unknown at startup until we learn a value
-        return self._brightness > 0
+        # Unknown at startup until seeded or first push
+        return self._is_on
 
     @property
-    def should_poll(self) -> bool:
-        # We get pushes from the controller thread.
-        return False
-
-    @property
-    def extra_state_attributes(self):
-        return {ATTR_NUMBER: self.lj_device}
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {ATTR_NUMBER: self._id}
 
     # ---------- Commands ----------
-    def turn_on(self, **kwargs):
+    async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
         if ATTR_BRIGHTNESS in kwargs:
             b_255 = int(kwargs[ATTR_BRIGHTNESS])
             b_99 = _lvl_255_to_99(b_255)
-            self.controller.activate_load_at(self.lj_device, b_99, 1)
+            await self.hass.async_add_executor_job(
+                self.controller.activate_load_at, self._id, b_99, 1
+            )
             self._brightness = b_255
         else:
-            self.controller.activate_load(self.lj_device)
+            await self.hass.async_add_executor_job(self.controller.activate_load, self._id)
             self._brightness = 255
-        self._state = True
+        self._is_on = True
         self.schedule_update_ha_state()
 
-    def turn_off(self, **kwargs):
+    async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
-        self.controller.deactivate_load(self.lj_device)
-        self._state = False
+        await self.hass.async_add_executor_job(self.controller.deactivate_load, self._id)
+        self._is_on = False
         self._brightness = 0
         self.schedule_update_ha_state()
 
-    # ---------- Sync update on add / restore ----------
-    def update(self):
-        """Retrieve the light's brightness from the Centralite system."""
+    # ---------- Optional sync snapshot (not needed on add since we seed) ----------
+    async def async_update(self) -> None:
+        """Retrieve brightness once, if ever needed."""
         try:
-            lvl_0_99 = self.controller.get_load_level(self.lj_device)
-        except Exception as e:
+            lvl_0_99 = await self.hass.async_add_executor_job(
+                self.controller.get_load_level, self._id
+            )
+        except Exception as e:  # keep logs quiet on disconnections
             _LOGGER.debug("get_load_level failed for %s: %s", self._name, e)
             return
-
         self._brightness = _lvl_99_to_255(lvl_0_99)
-        self._state = (self._brightness or 0) > 0
+        self._is_on = (self._brightness or 0) > 0
