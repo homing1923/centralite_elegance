@@ -35,20 +35,43 @@ def _parse_int_list(raw: str) -> list[int]:
     return out
 
 
-def _parse_scenes(raw: str) -> dict[str, str]:
+def _parse_scenes_with_dupe_check(raw: str) -> tuple[dict[str, str], set[int], set[int]]:
+    """
+    Returns (scenes_map, used_ids, duplicate_ids)
+    scenes_map: {"12": "Goodnight", ...}
+    used_ids: set of ints present
+    duplicate_ids: set of ints that were entered more than once
+    """
     result: dict[str, str] = {}
     if not raw:
-        return result
+        return result, set(), set()
+
+    used: list[int] = []
+    dupes: set[int] = set()
+
     for ln in raw.splitlines():
         if not ln.strip():
             continue
         m = re.match(r"\s*(\d+)\s*[:=]\s*(.+?)\s*$", ln)
         if not m:
             raise vol.Invalid(f"Invalid scene line: {ln!r} (use: ID: Name)")
-        sid = str(int(m.group(1)))   # normalize "007"->"7"
+        sid = int(m.group(1))
         name = m.group(2).strip()
-        result[sid] = name           # last one wins -> no dup keys
-    return result
+        if sid in used:
+            dupes.add(sid)
+        used.append(sid)
+        # last entry wins, so users can fix by repeating line correctly
+        result[str(sid)] = name
+
+    return result, set(used), dupes
+
+
+def _suggest_next_sid(used: set[int], start: int = 1, end: int = 256) -> int | None:
+    """Return the first free number in [start, end], or None if none available."""
+    for i in range(start, end + 1):
+        if i not in used:
+            return i
+    return None
 
 
 async def _scan_serial_ports(hass) -> list[dict[str, str]]:
@@ -190,24 +213,45 @@ class CentraliteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     # Step 4: scenes map
     async def async_step_scenes(self, user_input: dict[str, Any] | None = None):
+        """Provide scene id:name pairs with duplicate check."""
         errors: dict[str, str] = {}
+        note: str | None = None
+
         if user_input is not None:
             try:
-                scenes = _parse_scenes(user_input.get("scenes_map", ""))
+                scenes, used, dupes = _parse_scenes_with_dupe_check(user_input.get("scenes_map", ""))
             except vol.Invalid:
                 errors["base"] = "invalid_scenes"
             else:
-                data = {
-                    **getattr(self, "_base", {}),
-                    **getattr(self, "_devices", {}),
-                    "scenes_map": scenes,
-                }
-                return self.async_create_entry(title="Centralite", data=data)
+                if dupes:
+                    # Warn and suggest a free id
+                    suggestion = _suggest_next_sid(used)
+                    dupe_list = ", ".join(str(d) for d in sorted(dupes))
+                    if suggestion is not None:
+                        note = f"Duplicate scene number(s): {dupe_list}. Suggested free number: {suggestion}"
+                    else:
+                        note = f"Duplicate scene number(s): {dupe_list}. No free number available in 1..256."
+                    errors["base"] = "duplicate_scene_ids"
+                else:
+                    data = {
+                        **getattr(self, "_base", {}),
+                        **getattr(self, "_devices", {}),
+                        "scenes_map": scenes,
+                    }
+                    return self.async_create_entry(title="Centralite", data=data)
 
-        schema = vol.Schema({
-            vol.Optional("scenes_map", default=""): selector({"text": {"multiline": True}})
-        })
+        # Show form (we surface the human-readable note inside a separate field label)
+        default_text = user_input.get("scenes_map", "") if user_input else ""
+        schema_dict = {
+            vol.Optional("scenes_map", default=default_text): selector({"text": {"multiline": True}})
+        }
+        # Put a helper "note" field only when we have something to say
+        if note:
+            schema_dict[vol.Optional("note", default=note)] = selector({"text": {"multiline": False}})
+        schema = vol.Schema(schema_dict)
+
         return self.async_show_form(step_id="scenes", data_schema=schema, errors=errors)
+
 
     @staticmethod
     @callback
@@ -306,23 +350,40 @@ class CentraliteOptionsFlow(config_entries.OptionsFlow):
     async def async_step_scenes(self, user_input=None):
         base = {**self.entry.data, **(self.entry.options or {})}
         errors: dict[str, str] = {}
+        note: str | None = None
+
         if user_input is not None:
             try:
-                scenes = _parse_scenes(user_input.get("scenes_map", ""))
+                scenes, used, dupes = _parse_scenes_with_dupe_check(user_input.get("scenes_map", ""))
             except vol.Invalid:
                 errors["base"] = "invalid_scenes"
             else:
-                # Save options; carry forward previously collected _base/_devices
-                final = {
-                    **(self.entry.options or {}),
-                    **getattr(self, "_base", {}),
-                    **getattr(self, "_devices", {}),
-                    "scenes_map": scenes,
-                }
-                return self.async_create_entry(title="", data=final)
+                if dupes:
+                    suggestion = _suggest_next_sid(used)
+                    dupe_list = ", ".join(str(d) for d in sorted(dupes))
+                    if suggestion is not None:
+                        note = f"Duplicate scene number(s): {dupe_list}. Suggested free number: {suggestion}"
+                    else:
+                        note = f"Duplicate scene number(s): {dupe_list}. No free number available in 1..256."
+                    errors["base"] = "duplicate_scene_ids"
+                else:
+                    # Save options; port & include_switches were set in earlier steps
+                    return self.async_create_entry(
+                        title="",
+                        data={
+                            **(self.entry.options or {}),
+                            **getattr(self, "_devices", {}),
+                            "scenes_map": scenes,
+                        },
+                    )
 
-        scenes_lines = "\n".join(f"{k}: {v}" for k, v in base.get("scenes_map", {}).items())
-        schema = vol.Schema({
+        # Prefill textarea with current scenes
+        scenes_lines = "\n".join(f"{k}: {v}" for k, v in (base.get("scenes_map") or {}).items())
+        schema_dict = {
             vol.Optional("scenes_map", default=scenes_lines): selector({"text": {"multiline": True}})
-        })
+        }
+        if note:
+            schema_dict[vol.Optional("note", default=note)] = selector({"text": {"multiline": False}})
+        schema = vol.Schema(schema_dict)
+
         return self.async_show_form(step_id="scenes", data_schema=schema, errors=errors)
