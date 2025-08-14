@@ -38,17 +38,15 @@ async def async_setup_entry(
         ctrl.get_all_switch_states
     )
 
-    entities = [
-        CentraliteSwitch(
-            entry_id=entry.entry_id,
-            controller=ctrl,
-            switch_id=sid,
-            initially_on=bool(initial_states.get(sid, False)),
-        )
-        for sid in switch_ids
-    ]
-
-    _LOGGER.debug("centralite.switch: creating %d switch entities", len(entities))
+    seen = set()
+    entities = []
+    for sid in switch_ids:
+        name = ctrl.get_switch_name(sid)
+        uid = f"{entry.entry_id}.switch.{name}"
+        if uid in seen:
+            continue
+        seen.add(uid)
+        entities.append(CentraliteSwitch(entry.entry_id, ctrl, sid, initially_on=...))
     async_add_entities(entities, False)
 
 

@@ -23,30 +23,19 @@ def _parse_exclude(raw: str) -> list[str]:
 
 
 def _parse_int_list(raw: str) -> list[int]:
-    if not raw:
-        return []
-    items = re.split(r"[,\s]+", raw)
-    out: list[int] = []
-    for it in items:
-        if not it:
+    out = []
+    seen = set()
+    for token in re.split(r"[,\s]+", raw or ""):
+        if not token:
             continue
-        try:
-            v = int(it)
-            if v <= 0:
-                continue
-            if v not in out:
-                out.append(v)
-        except ValueError:
-            raise vol.Invalid(f"Invalid number: {it}")
+        v = int(token)
+        if v > 0 and v not in seen:
+            seen.add(v)
+            out.append(v)
     return out
 
 
 def _parse_scenes(raw: str) -> dict[str, str]:
-    """
-    Lines like:
-      10: Landscape Lights
-      12 = Goodnight
-    """
     result: dict[str, str] = {}
     if not raw:
         return result
@@ -56,8 +45,9 @@ def _parse_scenes(raw: str) -> dict[str, str]:
         m = re.match(r"\s*(\d+)\s*[:=]\s*(.+?)\s*$", ln)
         if not m:
             raise vol.Invalid(f"Invalid scene line: {ln!r} (use: ID: Name)")
-        sid, name = m.group(1), m.group(2)
-        result[sid] = name
+        sid = str(int(m.group(1)))   # normalize "007"->"7"
+        name = m.group(2).strip()
+        result[sid] = name           # last one wins -> no dup keys
     return result
 
 
