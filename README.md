@@ -1,80 +1,68 @@
 # centralite_elegance
-Centralite for home assistant 
 
-Note: 
-- this code should work with an eLite system
-- this code tested using an Elegance system and is only setup to handle one system, not multiple, but could be easily modified to support a multi-system
-- Jetstream support is/will be a fork of this project given the slightly different commands and device addressing structure. (coming soon)
-- June 2025 UPDATE - I ran into needing to set a self._attr_unique_id for the lights as a voice assistant needed the alias function/voice name for it. Setting the unique_id seems to cause the centralite_desc.yaml to be ignored and the friendly name needs to be entered into the web UI for each of the lights.
-
-I'm new to HA and this was my first ever python project.  I admit I don't understand everything in how this all works. Many thanks to pashar1's github repo for the structure and working light setup so I could largely mimic what was done to modify his scene & switch skeleton he already had stubbed. I've tried to document with comments things I learned.  
-
-I'm sure there are bugs -- I'm surprised I got it this far with my new python and HA experience.
-
-My setup:
-Raspberry Pi 4 running on an SSD
-Home Assistant OS 5.10 (using the HA OS image for install)
-
-Centralite System Prep:
-
-You must enable a few settings in the Centralite System configuration software. 
-- You must enable CR being sent with commands to the 3rd party system.  
-- Enable the loads for "load report". There is a global setting for this but it won't save on my Elegance system so I had to set it per load.
-- Also, for switches you will need to enable "Third party spontaneous output".  
-- This setup uses the RS232 port on the Centralite to communicate.  An RS232->USB adapter on the HA side works for me (rPi HA OS)
+Modified for HACS
 
 
-On Home Assistant, make this directory and put github files in: config/custom_components/centralite
+# Centralite Integration (Custom Config Entry Version)
 
-configuration.yaml should have these added (find usb via command line using: dmesg |grep usb  ):
+## Overview
+This is a refactored version of the Centralite integration for Home Assistant, migrated from static YAML configuration to a **full Config Entry** (UI-based) setup via HACS.  
+It supports:
+- Real-time USB port selection
+- User-customizable loads, switches, and scenes
+- Duplicate prevention when adding new scenes
 
-```
-# Logger debugging
-logger:
-  default: critical
-  logs:
-    custom_components.centralite: debug
-    custom_components.centralite.light: info
-    custom_components.centralite.switch: debug
-    custom_components.centralite.scene: critical
+## ✨ Key Changes
 
+### 1. Migration to Config Entries
+- Removed legacy YAML `setup()` and replaced with `__init__.py` using Home Assistant’s Config Entry API.
+- Now fully configurable from the Home Assistant UI.
+- Single `CentraliteHub` instance per config entry, reused across all platforms (`light`, `scene`, `switch`).
 
-homeassistant:
-  customize: !include centralite_desc.yaml
+### 2. USB Port Selection in UI
+- Config flow dynamically lists available serial/USB ports.
+- Users can pick the port from a dropdown instead of editing YAML.
 
-centralite:
-  port: /dev/ttyUSB1
-```
+### 3. User-Customizable Device Lists
+- Added `loads_include`, `switches_include`, and `scenes_map` stored in config entry options.
+- Editable via the **Options** flow after setup.
+- Lights and switches are filtered based on user selection.
 
-You can also reference the port by ID instead of ttyUSBx. As an example:
+### 4. Scene Management Enhancements
+- Scenes editable in UI: `scene_id: Scene Name` format.
+- Duplicate scene detection:
+  - Warns if a number is already assigned.
+  - Suggests next available free number.
+- Stable `unique_id` for entities to prevent duplication.
 
-port: /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_D-if00-port0
+### 5. Updated Platform Implementations
+- **`light.py`**
+  - Brightness scaling between Centralite’s 0–99 and HA’s 0–255.
+  - Real-time push updates from controller.
+  - Stable unique IDs using config entry `entry_id`.
+- **`scene.py`**
+  - ON/OFF entities per scene.
+  - Migrates old unique IDs automatically.
+- **`switch.py`**
+  - Optional switch entities.
+  - Push updates for button press/release events.
+  - Stable unique IDs using config entry `entry_id`.
 
-The upside of reference by ID is that if on reboot your usb moves from ttyUSB0 to ttyUSB1, referencing by ID doesn’t break your configuration. One warning is that if you have more than one serial-to-usb that are the same model, sometimes the manufacturer uses the same ID for every device so they aren’t unique.
+### 6. Persistent Controller Instance
+- Prevents multiple `Centralite` instances from being created when reloading or adding devices.
+- Shared controller reference via `hass.data[DOMAIN][entry_id]`.
 
-You can find your usb settings from a command line:
-`dmesg |grep usb`
+---
 
-In the pycentralite.py file, you need to modify these variables to support your system and which devices you want in HA:
-- LOADS_LIST
-- ACTIVE_SCENES_DICT
-- SWITCHES_LIST
+## 📦 Installation
+1. Copy this repository into your HACS `custom_components/centralite` folder.
+2. Restart Home Assistant.
+3. Go to **Settings → Devices & Services → Add Integration** and select **Centralite**.
+4. Follow the UI prompts to select USB port, loads, switches, and scenes.
 
-centralite_desc.yaml should look like this:
+---
 
-  """ NOTE THAT Scenes do not support friendly_name.  Their name is their only identifier """
-```
-  switch.sw044:
-    friendly_name: "Office ALL On Switch"  
-  switch.sw046:
-    friendly_name: "Office Recessed Switch"
-  switch.sw075:
-    friendly_name: "Master Bath - Shower Switch"
-    
-  light.l001:
-    friendly_name: "Upstairs Hall Recessed Lights"
-  light.l002:
-    friendly_name: "Upstairs West Rm - Closet Light"
-  light.l003:
-    friendly_name: "Upstairs North Rm - Vanity/sink light"
-```
+## 🛠 Notes
+- Edit scenes in the integration’s **Options** menu.
+- Scene IDs must be unique; the UI warns and suggests replacements.
+- Adding/removing devices will not create duplicate entities thanks to stable IDs.
