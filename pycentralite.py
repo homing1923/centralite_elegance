@@ -1,9 +1,11 @@
 import logging
 import serial
 import threading
-import binascii
+import sys  # needed by your exception handler
 
 WAIT_DELAY = 2
+SERIAL_TIMEOUT = 1.0  # seconds, tune as needed
+ENCODING = "utf-8"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -17,55 +19,68 @@ class CentraliteThread(threading.Thread):
       self._notify_event = notify_event
 
    def run(self):
-   
-      while True:
-         line = self._readline()
-         _LOGGER.debug('In While True, Incoming Line %s', line)
+        while True:
+            line = self._readline()
+            if line is None:
+                continue  # timeout or decode issue; try again
 
-         # ^K = load level change, P=pressed switch, R=released switch                  
-         if len(line)==5 and (line[0]=='P' or line[0]=='R'):
-            _LOGGER.info('  Matches P or R: %s', line)
-            self._notify_event(line)
-            continue            
-         elif len(line)==7 and (line[0]=='^' and line[1]=='K'):
-            _LOGGER.info('  Matches ^K: %s', line)
-            self._notify_event(line)
-            continue
-         elif len(line)==48:
-            # Incoming status for all loads/lights 
-            _LOGGER.info('  Matches LOADS 48 hex: %s', line)
-            #! this function isn't doing anything, no logging or anything
-            #self.set_all_load_states(line)
-            continue
-         elif len(line)==96:
-            # Incoming status for all switches
-            _LOGGER.info('  Matches SWITCHES 96 hex: %s', line)            
-            continue            
-         else:
-            _LOGGER.info('  UNRECOGNIZED INPUT, line is %s', line)
-            continue
-            
-         self._lastline = line
-         self._recv_event.set()
+            _LOGGER.debug('In While True, Incoming Line %s', line)
+
+            handled = False
+            if len(line) == 5 and (line[0] in ('P', 'R')):
+                _LOGGER.info('  Matches P or R: %s', line)
+                self._notify_event(line)
+                handled = True
+            elif len(line) == 7 and line.startswith('^K'):
+                _LOGGER.info('  Matches ^K: %s', line)
+                self._notify_event(line)
+                handled = True
+            elif len(line) == 48:
+                _LOGGER.info('  Matches LOADS 48 hex: %s', line)
+                try:
+                  states = Centralite.decode_loads_48hex(line)
+                except Exception as e:
+                  _LOGGER.debug("decode error on ^G frame: %s", e)
+                  continue
+
+                # fire pseudo-^K events so existing light handlers update
+                for load_id, is_on in states.items():
+                  level = "99" if is_on else "00"
+                  self._notify_event(f"^K{load_id:03d}{level}")
+                # fall through to record last line/signal
+
+            elif len(line) == 96:
+                _LOGGER.info('  Matches SWITCHES 96 hex: %s', line)
+                handled = True
+            else:
+                _LOGGER.info('  UNRECOGNIZED INPUT, line is %s', line)
+
+            # Always store last line & signal
+            self._lastline = line
+            self._recv_event.set()
 
    def _readline(self):
-      # This function requires the Elegance Centralite system to be configured to send third party CR and active load reporting to be ON. Centralite config software is wonky and isn't clear when the settings are saved.  Try a SEND from the main menu after setting them in the config menu.
-      _LOGGER.debug('  Start of _readline')
-      output = ''
-      while True:
-         byte = self._serial.read(size=1)
-         # if CR found, then it is the end of the command; this also removes the CR from the returned data therefore .strip() not needed
-         # why isn't a .read_until('\r') used??? rather than byte-by-byte, might not be supported in this version of pyserial? I tried, couldn't get it to work.
-         if (byte[0] == 0x0d):
-            break
-         output += byte.decode('utf-8')
-         
-         if len(output) == 100: #max output is likely 96 for switch status
-            _LOGGER.info('  Broken? OUTPUT IS 100!!!!!!!!!!!!!!!!')
-            break         
-         
-      _LOGGER.debug('  _readline output is: %s', output)
-      return output
+        _LOGGER.debug('  Start of _readline')
+        output_bytes = bytearray()
+        while True:
+            b = self._serial.read(size=1)
+            if not b:  # timeout
+                if output_bytes:
+                    break  # return partial (best effort)
+                return None
+            if b[0] == 0x0D:  # CR
+                break
+            output_bytes.extend(b)
+            if len(output_bytes) >= 100:
+                _LOGGER.info('  Broken? OUTPUT IS 100!!!!!!!!!!!!!!!!')
+                break
+        try:
+            s = output_bytes.decode(ENCODING, errors='replace')
+        except Exception as e:
+            _LOGGER.warning("  Decode error in _readline: %s", e)
+            return None
+        _LOGGER.debug('  _readline output is: %s', s)
+        return s
 
    def get_response(self):
       self._recv_event.wait(timeout=WAIT_DELAY)
@@ -113,44 +128,43 @@ class Centralite:
    _LOGGER.info('   In pycentralite.py startup "%s"', ACTIVE_SCENES_DICT)    
 
    def __init__(self, url):
-      _LOGGER.info('Start serial setup init using %s', url)
-      self._serial = serial.serial_for_url(url, baudrate=19200, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE)
-      self._events = {}
-      self._thread = CentraliteThread(self._serial, self._notify_event)
-      self._thread.start()
-      self._command_lock = threading.Lock()
+        _LOGGER.info('Start serial setup init using %s', url)
+        self._serial = serial.serial_for_url(
+            url,
+            baudrate=19200,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_ONE,
+            timeout=SERIAL_TIMEOUT,   # add timeout
+            write_timeout=SERIAL_TIMEOUT,
+        )
+        self._events: dict[str, list] = {}
+        self._command_lock = threading.Lock()
+        self._thread = CentraliteThread(self._serial, self._notify_event)
+        self._thread.start()
 
    def _send(self, command):
-      with self._command_lock:
-         _LOGGER.info('Send via _send "%s"', command)
-         self._serial.write(command.encode('utf-8'))
+        with self._command_lock:
+            if not command.endswith('\r'):
+                command = command + '\r'
+            _LOGGER.info('Send via _send "%s"', command.rstrip())
+            self._serial.write(command.encode(ENCODING))
 
    def _sendrecv(self, command):
-      with self._command_lock:
-         _LOGGER.debug('Send via _sendrecv "%s"', command)
-         self._serial.write(command.encode('utf-8'))
-         _LOGGER.debug('   Send via _sendrecv after .write ')
+        with self._command_lock:
+            if not command.endswith('\r'):
+                command = command + '\r'
+            _LOGGER.debug('Send via _sendrecv "%s"', command.rstrip())
+            self._serial.write(command.encode(ENCODING))
+            _LOGGER.debug('   Before read')
+        # release lock before waiting for thread signal
+        result = self._thread.get_response()
+        _LOGGER.debug('   Recv "%s"', result)
+        return result
 
-         # Testing note/code that's just here as a note.
-         #_LOGGER.info('testing a055')
-         # adding a .encode seems to break this, the b is necessary
-         #blah = "^A055"
-         #self._serial.write(blah.encode('utf-8'))
-         # this works too
-         #self._serial.write(b"^a055")
-         
-         
-         _LOGGER.debug('   Before read')
-         
-         #! The main while loop reading the RS232 seems to always capture the output.
-         #! Not all of the responses from Centralite have a leading character to indicate what the response is.
-         
-         #result = self._thread.get_response()
-         #result = self._readline()         
-                  
-         _LOGGER.debug('   Recv "%s"', result)
-         
-         return result
+   def get_response(self):
+      got = self._recv_event.wait(timeout=WAIT_DELAY)
+      self._recv_event.clear()
+      return self._lastline if got else None
 
 # Original.  What did I break?
 #def _sendrecv(self, command):
@@ -221,75 +235,56 @@ class Centralite:
       return output
  
    def _hex2bin_loads(self, response):
-      # THIS code works, but has not be validated inside HA -- cw      
-      # In this case the use of the word binary simply means the bit is 0 or 1 (e.g. on/off), each bit represents a light
-      
+   # response is 48 hex chars, grouped in 6-char chunks (3 bytes)
       hex2bin_map = {
-         "0":"0000", "1":"0001", "2":"0010", "3":"0011", "4":"0100", "5":"0101",
-         "6":"0110", "7":"0111", "8":"1000", "9":"1001", "A":"1010", "B":"1011",
-         "C":"1100", "D":"1101", "E":"1110", "F":"1111",
+         "0":"0000","1":"0001","2":"0010","3":"0011","4":"0100","5":"0101",
+         "6":"0110","7":"0111","8":"1000","9":"1001","A":"1010","B":"1011",
+         "C":"1100","D":"1101","E":"1110","F":"1111",
       }
-      # break it into 6 character sets
+      s = response.upper()
       i = 0
-      bytes = []
-      while i < len(hex):
-          bytes.append(hex[i:i+6])
-          i = i + 6
+      chunks = []
+      while i < len(s):
+         chunks.append(s[i:i+6])  # 3 bytes per chunk
+         i += 6
 
       reversed_bytes = []
-      for byteset in bytes:
-          i = 0
-          newbytes = ""
-          while i < 6:
-              newbytes = newbytes + byteset[i+1] + byteset[i]
-              i = i + 2
-          reversed_bytes.append(newbytes[::-1])
+      for chunk in chunks:
+         nb = ""
+         for j in range(0, len(chunk), 2):
+               nb += chunk[j+1] + chunk[j]  # swap each byte’s nibbles (AB→BA)
+         reversed_bytes.append(nb[::-1])  # reverse byte order for this chunk
 
-      binary_bytes = []
-      for byteset in reversed_bytes:
-          binary_rep = "".join(hex2bin_map[x] for x in byteset)
-          binary_bytes.append(binary_rep[::-1])
-
-      binary_string = "".join(binary_bytes) # collapse into a single string, each bit represents a light/load
-
-      return binary_string
+      bits = []
+      for rb in reversed_bytes:
+         bits.append("".join(hex2bin_map[x] for x in rb)[::-1])
+      return "".join(bits)
 
    def _hex2bin_switches(self, response):
-      # Taken from loads version and tweaked for switches, which break this up in 4-digit entries instead of 6-digit.
-      
-      #!  Not validated as working yet.
-      
-      # In this case the use of the word binary simply means the bit is 0 or 1 (e.g. on/off), each bit represents a light
-      
       hex2bin_map = {
-         "0":"0000", "1":"0001", "2":"0010", "3":"0011", "4":"0100", "5":"0101",
-         "6":"0110", "7":"0111", "8":"1000", "9":"1001", "A":"1010", "B":"1011",
-         "C":"1100", "D":"1101", "E":"1110", "F":"1111",
+         "0":"0000","1":"0001","2":"0010","3":"0011","4":"0100","5":"0101",
+         "6":"0110","7":"0111","8":"1000","9":"1001","A":"1010","B":"1011",
+         "C":"1100","D":"1101","E":"1110","F":"1111",
       }
-      # break it into 4 character sets
+      s = response.upper()
       i = 0
-      bytes = []
-      while i < len(hex):
-          bytes.append(hex[i:i+4])
-          i = i + 4
+      chunks = []
+      while i < len(s):
+         chunks.append(s[i:i+4])  # 2 bytes per chunk
+         i += 4
 
       reversed_bytes = []
-      for byteset in bytes:
-          i = 0
-          newbytes = ""
-          while i < 4:
-              newbytes = newbytes + byteset[i+1] + byteset[i]
-              i = i + 2
-          reversed_bytes.append(newbytes[::-1])
+      for chunk in chunks:
+         nb = ""
+         for j in range(0, len(chunk), 2):
+               nb += chunk[j+1] + chunk[j]
+         reversed_bytes.append(nb[::-1])
 
-      binary_bytes = []
-      for byteset in reversed_bytes:
-          binary_rep = "".join(hex2bin_map[x] for x in byteset)
-          binary_bytes.append(binary_rep[::-1])
+      bits = []
+      for rb in reversed_bytes:
+         bits.append("".join(hex2bin_map[x] for x in rb)[::-1])
+      return "".join(bits)
 
-      binary_string = "".join(binary_bytes) # collapse into a single string, each bit represents a switch
-
-      return binary_string
 
        
    def on_load_activated(self, index, handler):
@@ -299,7 +294,7 @@ class Centralite:
       self._add_event('F{0:03d}'.format(index), handler)
 
    def on_load_change(self, index, handler):
-      self._add_event('^K{0:03}'.format(index), handler)
+      self._add_event('^K{0:03d}'.format(index), handler)
 
    def on_switch_pressed(self, index, handler):
       # This is called when switch.py adds all the switch devices.  When else could it run?  - cw
@@ -368,37 +363,30 @@ class Centralite:
       return
 
    #! this function under developement
-   def get_all_load_states(self):
-      _LOGGER.debug('   IN get_all_load_states')
-      # THIS CODE hasn't been validated -- where should it be triggered and when? -- cw
-      response = self._sendrecv('^G')
-      #return self._hex2bits(response, 0, 47, Centralite.FIRST_LOAD)  # old original code
-      
-      _bin_string = self._hex2bin(response)
-      _LOGGER.debug('   IN get_all_load_states, _bin_string is %s', _bin_string)
-      
-      # Where to update light state?  Should be in light.py right????
-      
-      # Process binary string bit-by-bit, start at 1 to use as light id below
-      #i = 1 
-      #while i < len(_bin_string)+1:
-      #    _light_id = str(i).zfill(3)  # zero pad for centralight id
-      #    i = i + 1      
-            
-      #return self._hex2bits(response, 0, 47, Centralite.FIRST_LOAD)  # old original code
-      return self._hex2bin(response)
+   def get_all_load_states(self) -> dict[int, bool]:
+      """Send ^G and return {load#: on/off}."""
+      _LOGGER.debug("   IN get_all_load_states")
+      resp = self._sendrecv('^G')
+      try:
+         states = self.decode_loads_48hex(resp)
+      except Exception as e:
+         _LOGGER.debug("decode_loads_48hex failed: %s (resp=%r)", e, resp)
+         return {}
+      _LOGGER.debug("   load states decoded for %d loads", len(states))
+      return states
 
-   #! not used. Reads if led light on switch is active? This code is original, not adapted to CW hex2bin 
-   def get_all_switch_states(self):
-      _LOGGER.debug('   IN TOP get_all_switch_states')      
-      _bin_string = ''
-      #response = self._sendrecv('^H')
-      response = self._send('^H')
-      _LOGGER.debug('   IN TOP get_all_switch_states, AFTER _sendrecv response %s', response)
-      #return self._hex2bits(response, 0, 39, Centralite.FIRST_SWITCH)
-      #_bin_string = self._hex2bin(response)
-      _LOGGER.debug('   IN get_all_switch_states, after hex2bin and _bin_string is %s', _bin_string)      
-      return _bin_string
+   def get_all_switch_states(self) -> dict[int, bool]:
+        """Send ^H and return {switch#: on/off} (LED/logic state per manual)."""
+        _LOGGER.debug("   IN get_all_switch_states")
+        resp = self._sendrecv('^H')
+        try:
+            states = self.decode_switches_96hex(resp)
+        except Exception as e:
+            _LOGGER.debug("decode_switches_96hex failed: %s (resp=%r)", e, resp)
+            return {}
+        _LOGGER.debug("   switch states decoded for %d switches", len(states))
+        return states
+
 
    def press_switch(self, index):
       # THIS IS NOT FULLY TESTED BUT IT DOES SEND THE COMMANDS but I didn't see any activity in real life from it
@@ -447,3 +435,88 @@ class Centralite:
 
    def scenes(self):
       return(Centralite.ACTIVE_SCENES_DICT)
+
+
+   # ---- ASCII-hex -> boolean maps (per manual) -----------------------------
+   @staticmethod
+   def _bits_from_byte(byte_val: int):
+        """Yield 8 booleans LSB->MSB (bit0..bit7)."""
+        for bit in range(8):
+            yield bool((byte_val >> bit) & 0x01)
+
+   @staticmethod
+   def decode_loads_48hex(response: str) -> dict[int, bool]:
+        """
+        Decode ^G response: 48 ASCII hex digits (or any multiple of 6).
+        Every 6 hex digits represent 3 bytes = 24 loads (bits), LSB-first.
+        Chunks map sequentially: loads 1..24, 25..48, etc.
+        Returns { load_number(1-based): on(bool) }.
+        """
+        if not response:
+            return {}
+        s = response.strip().upper()
+        if len(s) % 6 != 0:
+            # be tolerant; ignore trailing partial
+            s = s[: len(s) // 6 * 6]
+
+        result: dict[int, bool] = {}
+        load_base = 0  # 0, 24, 48, ...
+
+        for off in range(0, len(s), 6):
+            chunk = s[off : off + 6]
+            # bytes: least-significant, middle, most-significant
+            b0 = int(chunk[0:2], 16)  # loads 1..8   (relative)
+            b1 = int(chunk[2:4], 16)  # loads 9..16
+            b2 = int(chunk[4:6], 16)  # loads 17..24
+
+            # Map 3 bytes -> 24 loads
+            idx = load_base + 1  # convert to 1-based
+            for bitval in Centralite._bits_from_byte(b0):  # 8 bits -> loads 1..8
+                result[idx] = bitval
+                idx += 1
+            for bitval in Centralite._bits_from_byte(b1):  # 9..16
+                result[idx] = bitval
+                idx += 1
+            for bitval in Centralite._bits_from_byte(b2):  # 17..24
+                result[idx] = bitval
+                idx += 1
+
+            load_base += 24
+
+        return result
+
+   @staticmethod
+   def decode_switches_96hex(response: str) -> dict[int, bool]:
+        """
+        Decode ^H response: 96 ASCII hex digits (or any multiple of 4).
+        Every 4 hex digits represent 2 bytes = 16 switches (bits), LSB-first.
+        Chunks map sequentially: switches 1..16, 17..32, etc.
+        Returns { switch_number(1-based): on(bool) }.
+        """
+        if not response:
+            return {}
+        s = response.strip().upper()
+        if len(s) % 4 != 0:
+            s = s[: len(s) // 4 * 4]
+
+        result: dict[int, bool] = {}
+        sw_base = 0  # 0, 16, 32, ...
+
+        for off in range(0, len(s), 4):
+            chunk = s[off : off + 4]
+            # bytes: least-significant, most-significant
+            b0 = int(chunk[0:2], 16)  # switches 1..8 (relative)
+            b1 = int(chunk[2:4], 16)  # switches 9..16
+
+            idx = sw_base + 1
+            for bitval in Centralite._bits_from_byte(b0):  # 1..8
+                result[idx] = bitval
+                idx += 1
+            for bitval in Centralite._bits_from_byte(b1):  # 9..16
+                result[idx] = bitval
+                idx += 1
+
+            sw_base += 16
+
+        return result
+   

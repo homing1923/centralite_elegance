@@ -7,131 +7,145 @@ Checklist for creating a platform: https://developers.home-assistant.io/docs/cre
 """
 import logging
 
-"""from homeassistant.components import centralite"""
-#from custom_components import centralite 
 from homeassistant.components.light import (
-    ATTR_BRIGHTNESS, SUPPORT_BRIGHTNESS, ENTITY_ID_FORMAT, LightEntity)
+    ATTR_BRIGHTNESS,
+    SUPPORT_BRIGHTNESS,
+    LightEntity,
+)
 
-#from custom_components.centralite import (
-#    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
-
-# helpful HA guru raman325 on discord said to use this import approach
 from . import (
-    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
-    
+    CENTRALITE_CONTROLLER,
+    CENTRALITE_DEVICES,
+    LJDevice,
+)
+
 _LOGGER = logging.getLogger(__name__)
 
-DEPENDENCIES = ['centralite']
+ATTR_NUMBER = "number"
 
-ATTR_NUMBER = 'number'
 
-# setup is called when HA is loading this component 
+def _lvl_99_to_255(level_0_99: int | None) -> int | None:
+    if level_0_99 is None:
+        return None
+    # Clamp and scale to 0–255
+    if level_0_99 < 0:
+        level_0_99 = 0
+    if level_0_99 > 99:
+        level_0_99 = 99
+    # Round so 99 -> 255, 1 -> ~3
+    return int(round(level_0_99 * 255 / 99))
+
+
+def _lvl_255_to_99(level_0_255: int) -> int:
+    # Clamp and scale to 0–99
+    if level_0_255 < 0:
+        level_0_255 = 0
+    if level_0_255 > 255:
+        level_0_255 = 255
+    return int(round(level_0_255 * 99 / 255))
+
+
+# setup is called when HA is loading this platform
 def setup_platform(hass, config, add_entities, discovery_info=None):
-    """Set up lights for the Centralite platform."""
-    centralite_ = hass.data[CENTRALITE_CONTROLLER]
-    
-    _LOGGER.debug("In light.py, device %s", hass.data[CENTRALITE_DEVICES])
-    
-    # add_entities() is a home assistant function, if true it triggers an update (or async_update),
-    #    if false it allows the state to be discovered later (thus state is inaccurate for a bit).
-    # setting to true causes serial communication one by one for each light to pull its status. HA startup is paused until this loop completes.
-    
-    # Note: Centralite can report all load/light/switch status in one serial call (see hex2bin()). 
-    # This code could be reworked to do that state update but this issue only comes up on startup so it isn't a big deal.
+    controller = hass.data[CENTRALITE_CONTROLLER]
+    light_ids = list(hass.data[CENTRALITE_DEVICES].get("light", []))
 
-    add_entities(
-        [CentraliteLight(device,centralite_) for
-         device in hass.data[CENTRALITE_DEVICES]['light']], True)    
+    # Seed initial ON/OFF from a single ^G call:
+    initial = controller.get_all_load_states()  # {id: bool}
+
+    entities = [
+        CentraliteLight(dev_id, controller, initially_on=bool(initial.get(dev_id, False)))
+        for dev_id in light_ids
+    ]
+    add_entities(entities, False)  # no need to force update if you seed
+
 
 
 class CentraliteLight(LJDevice, LightEntity):
     """Representation of a single Centralite light."""
-    
-    def __init__(self, lj_device, controller):
+
+    def __init__(self, lj_device, controller, initially_on: bool | None = None):
         """Initialize a Centralite light."""
-        _LOGGER.debug("init of the light for %s", lj_device)
+        if initially_on is not None:
+            self._brightness = 255 if initially_on else 0
+            self._state = initially_on
+        else:
+            self._brightness = None
+            self._state = None
         
-        self._brightness = None
-        self._state = None
-        self._name = controller.get_load_name(lj_device) 
-        self._attr_unique_id = f"elegance.{self._name}"
-        
-        _LOGGER.debug("    init of the light self._name is %s", self._name)
-        _LOGGER.debug("    init of the light self._attr_unique_id is %s", self._attr_unique_id)
-        
-        super().__init__(lj_device, controller, self._name)
-        
-        LJDevice.__init__(self,lj_device,controller,self._name)
+        name = controller.get_load_name(lj_device)
 
+        # LJDevice will set name, ids, etc.
+        super().__init__(lj_device, controller, name)
+
+        # Unique ID for registry
+        self._attr_unique_id = f"elegance.{name}"
+
+        # Subscribe to push notifications from controller (^KxxxYY events)
         controller.on_load_change(lj_device, self._on_load_changed)
-        
 
-    def _on_load_changed(self, _new_bright):
-        """Handle state changes."""
-        _LOGGER.debug("Updating due to notification for %s", self._name)
-        _LOGGER.debug("   level is %s", _new_bright)
-        _LOGGER.debug("   self.brightness is %s", self._brightness)        
-        
-        # In the __init__ above, the state is set but it doesn't seem to matter what happens here, it is still None regardless, I'm ignoring for now
-        #_LOGGER.debug("   self._state BEFORE is %s", self._state)
-        
-        self._brightness = int(_new_bright)
-        
-        _LOGGER.debug("   NEW self.brightness is %s", self._brightness)               
-                
-        """ 
-        Whenever you receive new state from your subscription, you can tell Home Assistant that an update is available by calling schedule_update_ha_state() or async callback async_schedule_update_ha_state(). Pass in the boolean True to the method if you want Home Assistant to call your update method (which causes a device query - cw) before writing the update to Home Assistant.
-        """
+        _LOGGER.debug("CentraliteLight init: id=%s name=%s uid=%s",
+                      lj_device, name, self._attr_unique_id)
+
+    # ---------- Push update path ----------
+    def _on_load_changed(self, new_level_str: str | None):
+        """Handle level change from controller (^KxxxYY)."""
+        _LOGGER.debug("Push update for %s: raw level=%s", self._name, new_level_str)
+        if not new_level_str:
+            return
+
+        try:
+            lvl_0_99 = int(new_level_str)
+        except (TypeError, ValueError):
+            _LOGGER.debug("Invalid level payload for %s: %r", self._name, new_level_str)
+            return
+
+        self._brightness = _lvl_99_to_255(lvl_0_99)
+        self._state = (self._brightness or 0) > 0
         self.schedule_update_ha_state()
-        #self.schedule_update_ha_state(True)
 
+    # ---------- HA-required properties ----------
     @property
     def supported_features(self):
-        """Flag supported features."""
         return SUPPORT_BRIGHTNESS
 
     @property
     def name(self):
-        """Return the light's name."""
         return self._name
 
     @property
-    def brightness(self):
-        """Return the light's brightness."""
+    def brightness(self) -> int | None:
         return self._brightness
 
     @property
-    def is_on(self):
-        """Return if the light is on."""
-        return self._brightness != 0
+    def is_on(self) -> bool | None:
+        if self._brightness is None:
+            return None  # unknown at startup until we learn a value
+        return self._brightness > 0
 
     @property
-    def should_poll(self):
-        """Return that lights do not require polling."""
+    def should_poll(self) -> bool:
+        # We get pushes from the controller thread.
         return False
 
     @property
-    def device_state_attributes(self):
-        """Return the device state attributes."""
-        return {
-            ATTR_NUMBER: self.lj_device
-        }
+    def extra_state_attributes(self):
+        return {ATTR_NUMBER: self.lj_device}
 
-    # HA function https://developers.home-assistant.io/docs/core/entity/light/
+    # ---------- Commands ----------
     def turn_on(self, **kwargs):
         """Turn on the light."""
         if ATTR_BRIGHTNESS in kwargs:
-            brightness = int(kwargs[ATTR_BRIGHTNESS] / 255 * 99)
-            self.controller.activate_load_at(self.lj_device, brightness, 1)
-            self._brightness = kwargs[ATTR_BRIGHTNESS]
+            b_255 = int(kwargs[ATTR_BRIGHTNESS])
+            b_99 = _lvl_255_to_99(b_255)
+            self.controller.activate_load_at(self.lj_device, b_99, 1)
+            self._brightness = b_255
         else:
             self.controller.activate_load(self.lj_device)
             self._brightness = 255
         self._state = True
         self.schedule_update_ha_state()
 
-
-    # HA function https://developers.home-assistant.io/docs/core/entity/light/
     def turn_off(self, **kwargs):
         """Turn off the light."""
         self.controller.deactivate_load(self.lj_device)
@@ -139,28 +153,14 @@ class CentraliteLight(LJDevice, LightEntity):
         self._brightness = 0
         self.schedule_update_ha_state()
 
-
+    # ---------- Sync update on add / restore ----------
     def update(self):
         """Retrieve the light's brightness from the Centralite system."""
-        
-        #! This causes the lights not to show up in UI.  Bug.  Oct 11, 2021 CJW
-        
-        _LOGGER.debug("In light.py update() what is self %s", self)
-        _LOGGER.debug("In light.py update() what is self.lj_device %s", self.lj_device)
-        #self._brightness = self.controller.get_load_level(self.lj_device) / 99 * 255
-        
-        self._brightness = 0 # this works, but is overiding everything
-        
-        #! this breaks it too
-        #self.controller.get_load_level(self.lj_device)
+        try:
+            lvl_0_99 = self.controller.get_load_level(self.lj_device)
+        except Exception as e:
+            _LOGGER.debug("get_load_level failed for %s: %s", self._name, e)
+            return
 
-    def update_ha_from_controller(self, _bin_string):
-        # THIS DOESN'T DO ANYTHING YET - cw
-        # Process binary string bit-by-bit, start at 1 to use as light id below
-        i = 1 
-        while i < len(_bin_string)+1:
-            if _bin_string[i-1] > 0:
-                _light_id = str(i).zfill(3)  # zero pad for centralight id
-                #self._state = ????
-            
-            i = i + 1      
+        self._brightness = _lvl_99_to_255(lvl_0_99)
+        self._state = (self._brightness or 0) > 0

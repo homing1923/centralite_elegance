@@ -4,114 +4,116 @@ Support for Centralite switch.
 For more details about this platform, please refer to the documentation at
 """
 import logging
+import sys
 
 from homeassistant.components.switch import SwitchEntity
 
-#from custom_components import centralite
-
-#from custom_components.centralite import (
-#    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
-
-# helpful HA guru raman325 on discord said to use this import approach
 from . import (
-    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
+    CENTRALITE_CONTROLLER,
+    CENTRALITE_DEVICES,
+    LJDevice,
+)
 
-
-DEPENDENCIES = ['centralite']
-
-ATTR_NUMBER = 'number'
+DEPENDENCIES = ["centralite"]
+ATTR_NUMBER = "number"
 
 _LOGGER = logging.getLogger(__name__)
-
 _LOGGER.debug("Top of switch.py")
+
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the Centralite switch platform."""
-    centralite_ = hass.data[CENTRALITE_CONTROLLER]
-    
-    _LOGGER.debug("In switch.py, device %s", hass.data[CENTRALITE_DEVICES])
+    controller = hass.data[CENTRALITE_CONTROLLER]
+    switch_ids = list(hass.data[CENTRALITE_DEVICES].get("switch", []))
 
-    add_entities(
-        [CentraliteSwitch(device,centralite_) for
-         device in hass.data[CENTRALITE_DEVICES]['switch']], True)
-    
+    _LOGGER.debug("centralite.switch: creating %d switch entities", len(switch_ids))
+
+    entities = [CentraliteSwitch(dev_id, controller) for dev_id in switch_ids]
+    # update_before_add=True is fine; our update() is noop (push-driven)
+    add_entities(entities, True)
 
 
 class CentraliteSwitch(LJDevice, SwitchEntity):
     """Representation of a single Centralite switch."""
 
-    #def __init__(self, hass, lj, i, name):
     def __init__(self, sw_device, controller):
         """Initialize a Centralite switch."""
-        _LOGGER.debug("init of the SWITCH for sw_device %s", sw_device)
-                
-        self._hass = controller
-        self._lj = sw_device
-        self._index = sw_device
-        self._state = None
-        self._name = controller.get_switch_name(sw_device) # self._name required from __init__.py LJDevice init
-        
-        self._attr_unique_id = f"elegance.{self._name}"
-        
-        _LOGGER.debug("    init of the SWITCH self._name is %s", self._name)
-        _LOGGER.debug("    init of the SWITCH self._attr_unique_id is %s", self._attr_unique_id)        
-        
-        super().__init__(sw_device, controller, self._name)
-        
-        #! this causes problems, I copied this from the light.py thinking it was needed. Seems ok without it.
-        #LJDevice.__init__(self, sw_device, controller, self._name)  
-        
+        name = controller.get_switch_name(sw_device)
+
+        self._state: bool | None = False  # pressed = True, released = False
+        self._uid = f"elegance.{name}"
+
+        super().__init__(sw_device, controller, name)
+
+        # Subscribe to P/R events
         controller.on_switch_pressed(sw_device, self._on_switch_pressed)
         controller.on_switch_released(sw_device, self._on_switch_released)
-        
-        _LOGGER.debug("   END of init of the SWITCH for sw_device %s", sw_device)
 
-    # *args is needed even though calling handler_params is empty
-    def _on_switch_pressed(self, *args):
-        _LOGGER.debug("Updating pressed for %s", self._name)
-        _LOGGER.debug("   current state %s", self._state)
-        self._state = True
-        _LOGGER.debug("   after set to True, current state %s", self._state)
-        try:
-            self.schedule_update_ha_state()
-        except:
-            error_msg = sys.exc_info()[0]
-            _LOGGER.debug("   failed schedule update ha state, error_msg: %s", error_msg)
+        _LOGGER.debug("CentraliteSwitch init: id=%s name=%s uid=%s",
+                      sw_device, name, self._uid)
 
-    def _on_switch_released(self, *args):
-        _LOGGER.debug("Updating released for %s", self._name)
-        _bin_string = self.controller.get_all_switch_states()
-        _LOGGER.debug("   After call to get_all_switch_states")
-        _LOGGER.debug("   _bin_string %s", _bin_string)
-        self._state = False
-        self.schedule_update_ha_state()
-
+    # ---- HA properties ----
     @property
     def name(self):
-        """Return the name of the switch."""
         return self._name
 
     @property
-    def is_on(self):
-        """Return if the switch is pressed."""
+    def is_on(self) -> bool | None:
+        # True when physically pressed (momentary), False when released
         return self._state
 
     @property
-    def should_poll(self):
-        """Return that polling is not necessary."""
+    def should_poll(self) -> bool:
+        # Push-driven by controller thread
         return False
 
     @property
-    def device_state_attributes(self):
-        """Return the device-specific state attributes."""
-        return {
-            ATTR_NUMBER: self._index
-        }
+    def extra_state_attributes(self):
+        return {ATTR_NUMBER: self.lj_device}
 
+    @property
+    def unique_id(self):
+        # Override LJDevice.unique_id so we keep our explicit uid
+        return self._uid
+
+    # ---- Event handlers from controller ----
+    def _on_switch_pressed(self, *args):
+        _LOGGER.debug("Switch pressed: %s", self._name)
+        self._state = True
+        self.schedule_update_ha_state()
+
+    def _on_switch_released(self, *args):
+        _LOGGER.debug("Updating released for %s", self._name)
+        states = self.controller.get_all_switch_states()  # now a dict
+        if states:
+            self._state = bool(states.get(self.lj_device, False))
+        else:
+            self._state = False
+        self.schedule_update_ha_state()
+
+    # ---- Commands (simulate press/release) ----
     def turn_on(self, **kwargs):
-        """Press the switch."""
-        self.controller.press_switch(self._index)
+        """Simulate pressing the switch."""
+        try:
+            self.controller.press_switch(self.lj_device)
+        except Exception:
+            _LOGGER.debug("press_switch failed: %s", sys.exc_info()[0])
+        # Optimistic update; controller should push real state shortly
+        self._state = True
+        self.schedule_update_ha_state()
 
     def turn_off(self, **kwargs):
-        """Release the switch."""
-        self.controller.release_switch(self._index)
+        """Simulate releasing the switch."""
+        try:
+            self.controller.release_switch(self.lj_device)
+        except Exception:
+            _LOGGER.debug("release_switch failed: %s", sys.exc_info()[0])
+        self._state = False
+        self.schedule_update_ha_state()
+
+    # No polling-based update needed (push-driven)
+    def update(self):
+        # Optional: keep switch LED/logic in sync on HA restarts
+        states = self.controller.get_all_switch_states()
+        if states:
+            self._state = bool(states.get(self.lj_device, False))

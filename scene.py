@@ -3,120 +3,77 @@ import logging
 import re
 
 from homeassistant.components.scene import Scene
+from homeassistant.util import slugify
 
-#from custom_components import centralite
-#from custom_components.centralite import (
-#    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
-
-# helpful HA guru raman325 on discord said to use this import approach
 from . import (
-    CENTRALITE_CONTROLLER, CENTRALITE_DEVICES, LJDevice)
+    CENTRALITE_CONTROLLER,
+    CENTRALITE_DEVICES,
+    LJDevice,
+)
 
-DEPENDENCIES = ['centralite']
-
-ATTR_NUMBER = 'number'
-
+DEPENDENCIES = ["centralite"]
+ATTR_NUMBER = "number"
 _LOGGER = logging.getLogger(__name__)
 
-_LOGGER.debug("Top of scene.py")
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up scenes for the Centralite platform."""
-    #centralite_ = hass.data['centralite_system']
-    centralite_ = hass.data[CENTRALITE_CONTROLLER]
-        
+    controller = hass.data[CENTRALITE_CONTROLLER]
+
     devices = []
-    
-    # .scenes() simply gets a LIST of scenes that need to be created (manually entered in pycentralite.py)
+    scenes_dict = controller.scenes()  # dict[str, str] like {"4": "Upstairs Path", ...}
 
-    _LOGGER.debug('   In scene.py, device "%s"', hass.data[CENTRALITE_DEVICES])
+    _LOGGER.debug("centralite.scene: building entities from %d scenes", len(scenes_dict))
 
-    # Heads up: HA's definition of a scene is a little different than Centralite and HA does not support an OFF for a scene.
-    #   In order to make it work, this below creates two HA scenes (one for ON, one for OFF) for each of the scenes to be created.
+    # HA doesn't support OFF for scenes; create ON/OFF variants.
+    for scene_id, base_name in scenes_dict.items():
+        devices.append(CentraliteScene(controller, scene_id, f"{base_name}-ON"))
+        devices.append(CentraliteScene(controller, scene_id, f"{base_name}-OFF"))
 
-    scenes_dict = centralite_.scenes()
-    for i in scenes_dict:
-        name = scenes_dict[i]
-        
-        # i is the dictionary key
-        _LOGGER.debug('      In FOR, i is "%s"', i)
-        
-        #_LOGGER.debug('      In FOR, name is "%s"', name)
-        name_on = name + "-ON"
-        
-        #_LOGGER.debug('      In FOR, name_on is "%s"', name_on)
-        name_off = name + "-OFF"
-        
-        #_LOGGER.debug('      In FOR, name_off is "%s"', name_off)
-        
-        devices.append(CentraliteScene(centralite_, i, name_on))
-        devices.append(CentraliteScene(centralite_, i, name_off))        
-                
-    #_LOGGER.debug('   Before add_entities, devices has "%s"', devices) 
-    add_entities(devices)
+    add_entities(devices, False)
 
 
 class CentraliteScene(LJDevice, Scene):
     """Representation of a single Centralite scene."""
-    _LOGGER.debug('   In CentraliteScene') 
-    
-    def __init__(self, lj, i, name):
-        """Initialize the scene."""
-        # lj is the controller?
-        _LOGGER.debug('   In CentraliteScene init, lj = "%s"', lj) 
-        _LOGGER.debug('   In CentraliteScene init, i = "%s"', i) 
-        _LOGGER.debug('   In CentraliteScene init, name = "%s"', name) 
-        
-        self._lj = lj
-        self._index = i
-        self._name = name  
-        
-        # see comment above that HA doesn't support scenes receiving an OFF. I cheat and create two scenes, one for on and one for off.
-        # Regex to check if self._name ends with ON or OFF (case-insensitive), this was previously appended to the variable, now I check for it again to use for the scene unique_id
-        _LOGGER.debug('   In CentraliteScene init, before regex')
-        match = re.search(r'(ON|OFF)$', self._name, re.IGNORECASE)
-        _LOGGER.debug('   In CentraliteScene init, after regex')
-        if match:
-            _LOGGER.debug('   In CentraliteScene init, regex matched')
-            matched_text = match.group(1).upper()
-        else:
-            matched_text = ""
-        _LOGGER.debug('   In CentraliteScene init, build unique id f string')
-        self._attr_unique_id = f"elegance.scene{self._index}{matched_text}"        
-        
-        _LOGGER.debug("    init of the SCENE self._name is %s", self._name)
-        _LOGGER.debug("    init of the SCENE self._index is %s", self._index)
-        _LOGGER.debug("    init of the SCENE self._attr_unique_id is %s", self._attr_unique_id)
-        
-        super().__init__(i, lj, self._name)
-        
-        #lj.activate_scene(sw_device, self.activate, self._name)  # not needed, there is no handler for scenes?
-        
-        # I'm not sure a scene is setup here to monitor any sort of trigger/state change
-              
 
+    def __init__(self, controller, scene_id, name):
+        """Initialize the scene."""
+        self._controller = controller
+        self._index = str(scene_id)  # keep as str; controller handles casting
+        self._name = name
+
+        # Build a stable unique_id that includes ON/OFF suffix
+        suffix_match = re.search(r"(ON|OFF)$", self._name, re.IGNORECASE)
+        suffix = suffix_match.group(1).upper() if suffix_match else ""
+        self._uid = f"elegance.scene.{self._index}.{suffix or 'NA'}"
+
+        super().__init__(self._index, controller, self._name)
+
+        _LOGGER.debug(
+            "CentraliteScene init: id=%s name=%s uid=%s",
+            self._index, self._name, self._uid
+        )
+
+    # ----- HA properties -----
     @property
     def name(self):
-        """Return the name of the scene."""
         return self._name
 
     @property
-    def device_state_attributes(self):
-        """Return the device-specific state attributes."""
-        return {
-            ATTR_NUMBER: self._index
-        }
+    def unique_id(self):
+        # Override LJDevice.unique_id so we include the ON/OFF variant
+        return self._uid
 
-    def activate(self, *args):
-        """Activate the scene."""
-        _LOGGER.debug('   In CentraliteScene activate, name = "%s"', self._name) 
-        self._lj.activate_scene(self._index, self._name)
+    @property
+    def extra_state_attributes(self):
+        return {ATTR_NUMBER: self._index}
 
-    # unused, HA does not support OFF for a scene
-    #def deactivate(self):
-    #    """Deactivate the scene."""
-    #    self._lj.deactivate_scene(self._index)
-        
+    @property
     def should_poll(self):
-        """Return that does not require polling."""
-        return False        
+        return False
+
+    # ----- Actions -----
+    def activate(self, **kwargs):
+        """Activate the scene (Centralite ON or OFF based on name)."""
+        _LOGGER.debug('Activating scene "%s" (%s)', self._name, self._index)
+        self._controller.activate_scene(self._index, self._name)
