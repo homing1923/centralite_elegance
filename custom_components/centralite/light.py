@@ -15,6 +15,8 @@ from homeassistant.components.light import (
     LightEntity,
 )
 from homeassistant.helpers.entity import DeviceInfo 
+from homeassistant.helpers import entity_registry as er
+import re
 
 from . import DOMAIN
 from .pycentralite import Centralite
@@ -41,6 +43,25 @@ def _lvl_255_to_99(level_0_255: int) -> int:
         level_0_255 = 255
     return int(round(level_0_255 * 99 / 255))
 
+async def _maybe_migrate_light_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """
+    Migrate legacy light unique_ids to the stable format:
+      old:  "elegance.L001"  or  "elegance.L1"
+      new:  "{entry_id}.load.{channel}"
+    """
+    reg = er.async_get(hass)
+    for ent in list(reg.entities.values()):
+        if ent.config_entry_id != entry.entry_id or ent.platform != DOMAIN:
+            continue
+
+        # Match "elegance.L001" or "elegance.L1"
+        m = re.fullmatch(r"elegance\.L(\d+)", ent.unique_id)
+        if not m:
+            continue
+        channel = int(m.group(1))
+        new_uid = f"{entry.entry_id}.load.{channel}"
+        if ent.unique_id != new_uid:
+            reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -48,6 +69,8 @@ async def async_setup_entry(
     """Set up Centralite lights from a config entry."""
     hub = hass.data[DOMAIN][entry.entry_id]
     ctrl: Centralite = hub.controller
+
+    await _maybe_migrate_light_unique_ids(hass, entry)
 
     # Which loads to expose (user selection from options, or all)
     all_ids = ctrl.loads()

@@ -11,6 +11,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers import entity_registry as er
+import re
 
 from . import DOMAIN
 from .pycentralite import Centralite
@@ -19,6 +21,26 @@ _LOGGER = logging.getLogger(__name__)
 
 ATTR_NUMBER = "number"
 
+async def _maybe_migrate_switch_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """
+    Migrate legacy switch unique_ids to the stable format:
+      old:  "elegance.SW075"
+      new:  "{entry_id}.switch.SW075"
+    """
+    reg = er.async_get(hass)
+    for ent in list(reg.entities.values()):
+        if ent.config_entry_id != entry.entry_id or ent.platform != DOMAIN:
+            continue
+
+        m = re.fullmatch(r"elegance\.SW(\d+)", ent.unique_id)
+        if not m:
+            continue
+        sw = int(m.group(1))
+        new_uid = f"{entry.entry_id}.switch.SW{sw:03d}"
+        if ent.unique_id != new_uid:
+            reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
+
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -26,6 +48,8 @@ async def async_setup_entry(
     """Set up Centralite switches from a config entry."""
     hub = hass.data[DOMAIN][entry.entry_id]
     ctrl: Centralite = hub.controller
+
+    await _maybe_migrate_switch_unique_ids(hass, entry)
 
     if not hub.include_switches:
         _LOGGER.debug("centralite.switch: include_switches is False; skipping")

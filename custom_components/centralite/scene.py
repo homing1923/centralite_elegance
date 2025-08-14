@@ -90,12 +90,12 @@ async def _maybe_migrate_scene_unique_ids(
 
         # Pattern 1: our earlier numeric unique_id
         m = re.fullmatch(rf"{re.escape(entry.entry_id)}\.scene\.(\d+)\.(ON|OFF)", ent.unique_id)
-        # Pattern 2: legacy very old "elegance.scene12ON"
         if not m:
+            # Pattern 2a: very old "elegance.scene12ON"
             m = re.fullmatch(r"elegance\.scene(\d+)(ON|OFF)", ent.unique_id)
-
         if not m:
-            continue
+            # Pattern 2b: variant "elegance.scene12.ON"
+            m = re.fullmatch(r"elegance\.scene(\d+)\.(ON|OFF)", ent.unique_id)
 
         sid, suffix = str(int(m.group(1))), m.group(2)
         key = sid_to_key.get(sid)
