@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.light import (
@@ -14,7 +14,6 @@ from homeassistant.components.light import (
     SUPPORT_BRIGHTNESS,
     LightEntity,
 )
-from homeassistant.helpers.typing import UNDEFINED
 
 from . import DOMAIN
 from .pycentralite import Centralite
@@ -31,7 +30,6 @@ def _lvl_99_to_255(level_0_99: int | None) -> int | None:
         level_0_99 = 0
     if level_0_99 > 99:
         level_0_99 = 99
-    # round so 99 -> 255
     return int(round(level_0_99 * 255 / 99))
 
 
@@ -50,23 +48,27 @@ async def async_setup_entry(
     hub = hass.data[DOMAIN][entry.entry_id]
     ctrl: Centralite = hub.controller
 
-    # Load list of light IDs from controller
-    light_ids = ctrl.loads()
+    # Which loads to expose (user selection from options, or all)
+    all_ids = ctrl.loads()
+    load_ids = hub.loads_include or all_ids
 
-    # Seed initial ON/OFF from a single ^G call to avoid per-entity polling on startup
-    initial_states = await hass.async_add_executor_job(ctrl.get_all_load_states)
-    entities: list[CentraliteLight] = [
+    # Seed initial on/off state in one call (^G)
+    initial_states: dict[int, bool] = await hass.async_add_executor_job(
+        ctrl.get_all_load_states
+    )
+
+    entities = [
         CentraliteLight(
             hass=hass,
             controller=ctrl,
             load_id=lid,
             initially_on=bool(initial_states.get(lid, False)),
         )
-        for lid in light_ids
+        for lid in load_ids
     ]
 
     _LOGGER.debug("centralite.light: creating %d light entities", len(entities))
-    async_add_entities(entities, False)  # already seeded; no need to call update() immediately
+    async_add_entities(entities, False)  # already seeded
 
 
 class CentraliteLight(LightEntity):
@@ -136,7 +138,6 @@ class CentraliteLight(LightEntity):
 
     @property
     def is_on(self) -> bool | None:
-        # Unknown at startup until seeded or first push
         return self._is_on
 
     @property
@@ -154,26 +155,29 @@ class CentraliteLight(LightEntity):
             )
             self._brightness = b_255
         else:
-            await self.hass.async_add_executor_job(self.controller.activate_load, self._id)
+            await self.hass.async_add_executor_job(
+                self.controller.activate_load, self._id
+            )
             self._brightness = 255
         self._is_on = True
         self.schedule_update_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
-        await self.hass.async_add_executor_job(self.controller.deactivate_load, self._id)
+        await self.hass.async_add_executor_job(
+            self.controller.deactivate_load, self._id
+        )
         self._is_on = False
         self._brightness = 0
         self.schedule_update_ha_state()
 
-    # ---------- Optional sync snapshot (not needed on add since we seed) ----------
     async def async_update(self) -> None:
-        """Retrieve brightness once, if ever needed."""
+        """Fallback single-light refresh (rarely needed)."""
         try:
             lvl_0_99 = await self.hass.async_add_executor_job(
                 self.controller.get_load_level, self._id
             )
-        except Exception as e:  # keep logs quiet on disconnections
+        except Exception as e:
             _LOGGER.debug("get_load_level failed for %s: %s", self._name, e)
             return
         self._brightness = _lvl_99_to_255(lvl_0_99)

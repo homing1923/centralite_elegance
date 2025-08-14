@@ -27,32 +27,46 @@ async def async_setup_entry(
     hub = hass.data[DOMAIN][entry.entry_id]
     ctrl: Centralite = hub.controller
 
-    scenes = ctrl.scenes()  # dict[str, str] e.g. {"4": "Upstairs Path", ...}
-    entities: list[CentraliteScene] = []
+    # Use user-defined scenes if provided, else driver defaults.
+    scenes: dict[str, str] = hub.scenes_map or ctrl.scenes()
 
-    # HA has no OFF for scenes; create ON/OFF variants for each Centralite scene.
+    entities: list[CentraliteScene] = []
     for scene_id, base_name in scenes.items():
-        entities.append(CentraliteScene(ctrl, str(scene_id), f"{base_name}-ON"))
-        entities.append(CentraliteScene(ctrl, str(scene_id), f"{base_name}-OFF"))
+        entities.append(CentraliteScene(entry.entry_id, ctrl, str(scene_id), f"{base_name}-ON"))
+        entities.append(CentraliteScene(entry.entry_id, ctrl, str(scene_id), f"{base_name}-OFF"))
 
     _LOGGER.debug("centralite.scene: creating %d scene entities", len(entities))
     async_add_entities(entities, False)
 
 
 class CentraliteScene(Scene):
-    """Representation of a single Centralite scene (ON or OFF variant)."""
+    """Representation of a single Centralite scene (ON or OFF)."""
 
     _attr_should_poll = False
 
-    def __init__(self, controller: Centralite, scene_id: str, name: str) -> None:
+    def __init__(
+        self,
+        entry_id: str,
+        controller: Centralite,
+        scene_id: str,
+        name: str,
+    ) -> None:
+        self._entry_id = entry_id
         self.controller = controller
-        self._index = str(scene_id)  # controller handles casting internally
+        self._index = str(scene_id)
         self._name = name
 
-        # Stable unique_id including ON/OFF suffix
+        # Stable unique_id including config entry
         suffix_match = re.search(r"(ON|OFF)$", self._name, re.IGNORECASE)
         suffix = suffix_match.group(1).upper() if suffix_match else "NA"
-        self._attr_unique_id = f"elegance.scene.{self._index}.{suffix}"
+        self._attr_unique_id = f"{self._entry_id}.scene.{self._index}.{suffix}"
+
+        _LOGGER.debug(
+            "CentraliteScene init: id=%s name=%s uid=%s",
+            self._index,
+            self._name,
+            self._attr_unique_id,
+        )
 
     # ---------- HA properties ----------
     @property
@@ -63,10 +77,8 @@ class CentraliteScene(Scene):
     def extra_state_attributes(self) -> dict[str, Any]:
         return {ATTR_NUMBER: self._index}
 
-    # ---------- Actions ----------
-    async def async_activate(self, **kwargs: Any) -> None:
-        """Activate the scene (Centralite ON or OFF based on name)."""
-        _ = kwargs
+    # ---------- Scene action ----------
+    async def async_activate(self, **_: Any) -> None:
         await self.hass.async_add_executor_job(
             self.controller.activate_scene, self._index, self._name
         )

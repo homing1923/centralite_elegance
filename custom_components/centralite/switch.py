@@ -4,7 +4,6 @@ Support for Centralite switches (Config Entry version).
 from __future__ import annotations
 
 import logging
-import sys
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -27,56 +26,71 @@ async def async_setup_entry(
     hub = hass.data[DOMAIN][entry.entry_id]
     ctrl: Centralite = hub.controller
 
-    # Respect the UI option to include/exclude switches
-    if not getattr(hub, "include_switches", False):
+    if not hub.include_switches:
         _LOGGER.debug("centralite.switch: include_switches is False; skipping")
         return
 
-    switch_ids = ctrl.button_switches()  # list[int]
-    # Optional: seed state with one ^H snapshot so UI isn't 'unknown'
-    initial = await hass.async_add_executor_job(ctrl.get_all_switch_states)  # {id: bool}
+    all_ids = ctrl.button_switches()
+    switch_ids = hub.switches_include or all_ids
+
+    # Seed initial LED/logic state from ^H (not strictly required for momentary behavior)
+    initial_states: dict[int, bool] = await hass.async_add_executor_job(
+        ctrl.get_all_switch_states
+    )
 
     entities = [
         CentraliteSwitch(
+            entry_id=entry.entry_id,
             controller=ctrl,
             switch_id=sid,
-            initially_on=bool(initial.get(sid, False)),
+            initially_on=bool(initial_states.get(sid, False)),
         )
         for sid in switch_ids
     ]
+
     _LOGGER.debug("centralite.switch: creating %d switch entities", len(entities))
     async_add_entities(entities, False)
 
 
 class CentraliteSwitch(SwitchEntity):
-    """Representation of a single Centralite switch."""
+    """Representation of a single Centralite switch (momentary: pressed/released)."""
 
     _attr_should_poll = False  # push-driven via P/R events
 
-    def __init__(self, controller: Centralite, switch_id: int, initially_on: bool = False) -> None:
+    def __init__(
+        self,
+        entry_id: str,
+        controller: Centralite,
+        switch_id: int,
+        initially_on: bool = False,
+    ) -> None:
+        self._entry_id = entry_id
         self.controller = controller
         self._id = int(switch_id)
         self._name = controller.get_switch_name(self._id)  # e.g. "SW075"
-        self._attr_unique_id = f"elegance.{self._name}"
+        self._attr_unique_id = f"{self._entry_id}.switch.{self._name}"
 
-        # State: True when physically pressed, False when released
+        # pressed=True, released=False
         self._state: bool = bool(initially_on)
 
-        # Subscribe to P/R events (push updates)
+        # Subscribe to push events
         controller.on_switch_pressed(self._id, self._on_switch_pressed)
         controller.on_switch_released(self._id, self._on_switch_released)
 
-        _LOGGER.debug("CentraliteSwitch init: id=%s name=%s uid=%s seeded=%s",
-                      self._id, self._name, self._attr_unique_id, initially_on)
+        _LOGGER.debug(
+            "CentraliteSwitch init: id=%s name=%s uid=%s seeded=%s",
+            self._id,
+            self._name,
+            self._attr_unique_id,
+            initially_on,
+        )
 
-    # ---------- Event handlers from controller ----------
-    def _on_switch_pressed(self, *args) -> None:
-        _LOGGER.debug("Switch pressed: %s", self._name)
+    # ---------- Event handlers ----------
+    def _on_switch_pressed(self, *_: Any) -> None:
         self._state = True
         self.schedule_update_ha_state()
 
-    def _on_switch_released(self, *args) -> None:
-        _LOGGER.debug("Switch released: %s", self._name)
+    def _on_switch_released(self, *_: Any) -> None:
         self._state = False
         self.schedule_update_ha_state()
 
@@ -94,27 +108,13 @@ class CentraliteSwitch(SwitchEntity):
         return {ATTR_NUMBER: self._id}
 
     # ---------- Commands (simulate press/release) ----------
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Simulate pressing the switch."""
-        try:
-            await self.hass.async_add_executor_job(self.controller.press_switch, self._id)
-            # optimistic; actual state will be confirmed by P event
-            self._state = True
-        except Exception:
-            _LOGGER.debug("press_switch failed for %s: %s", self._name, sys.exc_info()[0])
+    async def async_turn_on(self, **_: Any) -> None:
+        await self.hass.async_add_executor_job(self.controller.press_switch, self._id)
+        # Optimistic; physical P event should follow
+        self._state = True
         self.schedule_update_ha_state()
 
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Simulate releasing the switch."""
-        try:
-            await self.hass.async_add_executor_job(self.controller.release_switch, self._id)
-            self._state = False
-        except Exception:
-            _LOGGER.debug("release_switch failed for %s: %s", self._name, sys.exc_info()[0])
+    async def async_turn_off(self, **_: Any) -> None:
+        await self.hass.async_add_executor_job(self.controller.release_switch, self._id)
+        self._state = False
         self.schedule_update_ha_state()
-
-    # No polling update; if you want to resync from ^H occasionally, you could add:
-    # async def async_update(self) -> None:
-    #     states = await self.hass.async_add_executor_job(self.controller.get_all_switch_states)
-    #     if states and self._id in states:
-    #         self._state = bool(states[self._id])
