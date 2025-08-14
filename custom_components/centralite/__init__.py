@@ -47,18 +47,21 @@ def _merged(entry: ConfigEntry) -> dict:
     return data
 
 
+async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hub = CentraliteHub(hass, _merged(entry))
     await hub.async_setup()
-
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = hub
 
-    # IMPORTANT: reload platforms cleanly whenever options change
-    entry.async_on_unload(entry.add_update_listener(_reload_on_update))
+    # ⬇️ add this
+    entry.async_on_unload(entry.add_update_listener(_update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
