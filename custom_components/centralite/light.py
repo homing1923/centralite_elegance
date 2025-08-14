@@ -43,35 +43,23 @@ def _lvl_255_to_99(level_0_255: int) -> int:
         level_0_255 = 255
     return int(round(level_0_255 * 99 / 255))
 
-async def _maybe_migrate_light_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """
-    Migrate legacy light unique_ids to the stable, padded format:
-      legacy: "elegance.L001" or "elegance.L1"
-      interim: "{entry_id}.load.1"
-      final:   "{entry_id}.load.001"
-    """
+async def _maybe_migrate_light_unique_ids(hass, entry):
     reg = er.async_get(hass)
-
     for ent in list(reg.entities.values()):
         if ent.config_entry_id != entry.entry_id or ent.platform != DOMAIN:
             continue
 
-        # 1) Legacy elegance.* → new padded
         m = re.fullmatch(r"elegance\.L(\d+)", ent.unique_id)
         if m:
             channel = int(m.group(1))
-            new_uid = f"{entry.entry_id}.load.{channel:03d}"
-            if ent.unique_id != new_uid:
-                reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
+            reg.async_update_entity(ent.entity_id, new_unique_id=f"{entry.entry_id}.load.{channel:03d}")
             continue
 
-        # 2) Interim new (un-padded) → padded
         m = re.fullmatch(rf"{re.escape(entry.entry_id)}\.load\.(\d+)", ent.unique_id)
         if m:
             channel = int(m.group(1))
-            new_uid = f"{entry.entry_id}.load.{channel:03d}"
-            if ent.unique_id != new_uid:
-                reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
+            reg.async_update_entity(ent.entity_id, new_unique_id=f"{entry.entry_id}.load.{channel:03d}")
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback

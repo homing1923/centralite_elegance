@@ -72,40 +72,29 @@ async def async_setup_entry(
     async_add_entities(entities, False)
 
 
-async def _maybe_migrate_scene_unique_ids(
-    hass: HomeAssistant, entry: ConfigEntry, scenes_map: dict[str, str]
-) -> None:
-    """
-    One-time migration:
-      old:  {entry}.scene.{sid}.(ON|OFF)     or  elegance.scene{sid}(ON|OFF)
-      new:  {entry}.scene.{slug(name)}.(ON|OFF)
-    """
+async def _maybe_migrate_scene_unique_ids(hass, entry, scenes_map):
     reg = er.async_get(hass)
-    # Build current sid -> key map from options
-    sid_to_key = {str(int(sid)): slugify(name) for sid, name in scenes_map.items()}
-    for entity_id in list(reg.entities):
-        ent = reg.entities[entity_id]
+    sid_to_key = {str(int(sid)): slugify(name) for sid, name in (scenes_map or {}).items()}
+    for ent in list(reg.entities.values()):
         if ent.config_entry_id != entry.entry_id or ent.platform != DOMAIN:
             continue
 
-        # Pattern 1: our earlier numeric unique_id
         m = re.fullmatch(rf"{re.escape(entry.entry_id)}\.scene\.(\d+)\.(ON|OFF)", ent.unique_id)
         if not m:
-            # Pattern 2a: very old "elegance.scene12ON"
             m = re.fullmatch(r"elegance\.scene(\d+)(ON|OFF)", ent.unique_id)
         if not m:
-            # Pattern 2b: variant "elegance.scene12.ON"
             m = re.fullmatch(r"elegance\.scene(\d+)\.(ON|OFF)", ent.unique_id)
+        if not m:
+            continue  # << guard
 
         sid, suffix = str(int(m.group(1))), m.group(2)
         key = sid_to_key.get(sid)
         if not key:
-            # If that sid no longer exists, skip migration (entity will be removed on reload)
-            continue
+            continue  # scene id was removed/renamed; leave it orphaned by design
         new_uid = f"{entry.entry_id}.scene.{key}.{suffix}"
         if ent.unique_id != new_uid:
-            _LOGGER.debug("Migrating scene unique_id %s -> %s", ent.unique_id, new_uid)
             reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
+
 
 
 class CentraliteScene(Scene):

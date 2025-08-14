@@ -127,39 +127,54 @@ class CentraliteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     # Step 1: choose port (live scan) or manual
+# Step 1: choose port (live scan) or manual
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
             choice = user_input["port_choice"]
             if choice == MANUAL_VALUE:
                 return await self.async_step_manual()
-            self._chosen_port = choice
+
+            # Normalize and set unique_id based on the chosen port
+            chosen = str(choice)
+            unique_id = f"serial://{chosen}".lower()
+            await self.async_set_unique_id(unique_id)
+
+            # If an entry with this unique_id already exists, update its data and abort the new flow.
+            # This *reuses the same entry_id*, which is what we want for entity migrations.
+            self._abort_if_unique_id_configured(updates={"port": chosen})
+
+            # New entry path (no existing one)
+            self._chosen_port = chosen
             return await self.async_step_options_basic()
 
         options = await _scan_serial_ports(self.hass)
         schema = vol.Schema({
-            vol.Required("port_choice"): selector({"select": {"mode": "dropdown", "options": options}})
+            vol.Required("port_choice"): selector({
+                "select": {"mode": "dropdown", "options": options}
+            })
         })
         return self.async_show_form(step_id="user", data_schema=schema)
+
 
     # Step 1b: enter manual port (and probe)
     async def async_step_manual(self, user_input: dict[str, Any] | None = None):
         errors: dict[str, str] = {}
         if user_input is not None:
-            raw = (user_input.get("port") or "").strip()
-            if not raw:
-                errors["base"] = "port_required"
+            chosen = user_input.get("port", "").strip()
+            if not chosen:
+                errors["base"] = "invalid_port"
             else:
-                err = await _probe_port(self.hass, raw)
-                if err:
-                    errors["base"] = err
-                else:
-                    self._chosen_port = raw
-                    return await self.async_step_options_basic()
+                unique_id = f"serial://{chosen}".lower()
+                await self.async_set_unique_id(unique_id)
+                self._abort_if_unique_id_configured(updates={"port": chosen})
+                self._chosen_port = chosen
+                return await self.async_step_options_basic()
 
         schema = vol.Schema({
-            vol.Required("port"): selector({"text": {"type": "text"}}),
+            vol.Required("port"): str,
         })
         return self.async_show_form(step_id="manual", data_schema=schema, errors=errors)
+
 
     # Step 2: basic options (include_switches / exclude_names), probe chosen port again
     async def async_step_options_basic(self, user_input: dict[str, Any] | None = None):
