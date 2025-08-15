@@ -2,6 +2,8 @@ import logging
 from homeassistant.config_entries import ConfigEntry, ConfigEntryNotReady
 from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform
+from .const import DOMAIN, PLATFORMS
+from .hub import CentraliteHub
 from serial import serialutil
 from .pycentralite import Centralite
 
@@ -44,14 +46,22 @@ def _merged(entry: ConfigEntry) -> dict:
     data.update(entry.options or {})
     return data
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    hub = CentraliteHub(hass, _merged(entry))
-    await hub.async_setup()  # <-- matches the no-arg method above
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = hub
+async def async_setup_entry(hass, entry):
+    # ---- one-time data → options migration ----
+    moved, data, opts = False, dict(entry.data), dict(entry.options or {})
+    for k in ("loads_include", "switches_include", "scenes_map"):
+        if k in data and k not in opts:
+            opts[k] = data.pop(k)
+            moved = True
+    if moved:
+        hass.config_entries.async_update_entry(entry, data=data, options=opts)
+    # --------------------------------------------
 
-    # reload on options change
-    async def _update_listener(hass: HomeAssistant, updated_entry: ConfigEntry) -> None:
+    hub = CentraliteHub(hass, {**entry.data, **entry.options})
+    await hub.async_setup()
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = hub
+
+    async def _update_listener(hass, updated_entry):
         await hass.config_entries.async_reload(updated_entry.entry_id)
     entry.async_on_unload(entry.add_update_listener(_update_listener))
 

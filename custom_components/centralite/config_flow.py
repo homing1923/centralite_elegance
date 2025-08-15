@@ -24,16 +24,19 @@ def _parse_exclude(raw: str) -> list[str]:
 
 
 def _parse_int_list(raw: str) -> list[int]:
-    out = []
-    seen = set()
+    out, seen = [], set()
     for token in re.split(r"[,\s]+", raw or ""):
         if not token:
             continue
-        v = int(token)
+        try:
+            v = int(token)
+        except ValueError:
+            raise vol.Invalid(f"Invalid number: {token}")
         if v > 0 and v not in seen:
             seen.add(v)
             out.append(v)
     return out
+
 
 
 def _parse_scenes_with_dupe_check(raw: str) -> tuple[dict[str, str], set[int], set[int]]:
@@ -128,34 +131,32 @@ class CentraliteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_import(self, user_input):
-            # user_input is the dict from YAML (e.g., {"port": "...", "loads_include": [...], ...})
-            chosen = str(user_input["port"]).strip()
-            unique_id = f"serial://{chosen}".lower()
-            await self.async_set_unique_id(unique_id)
+        # user_input is the dict from YAML (e.g., {"port": "...", "loads_include": [...], ...})
+        chosen = str(user_input["port"]).strip()
+        unique_id = f"serial://{chosen}".lower()
+        await self.async_set_unique_id(unique_id)
 
-            # Reuse/update existing entry if it already exists
-            self._abort_if_unique_id_configured(updates={
+        # If an entry for this port already exists, update just the connection bits and abort this flow.
+        self._abort_if_unique_id_configured(updates={
+            "port": chosen,
+            "include_switches": user_input.get("include_switches", False),
+            "exclude_names": user_input.get("exclude_names", []),
+        })
+
+        # New entry: keep only connection bits in data; everything you want editable goes to options
+        return self.async_create_entry(
+            title="Centralite",
+            data={
                 "port": chosen,
                 "include_switches": user_input.get("include_switches", False),
                 "exclude_names": user_input.get("exclude_names", []),
-                # Put lists/maps into entry.data now, or move to entry.options later
+            },
+            options={
                 "loads_include": user_input.get("loads_include", []),
                 "switches_include": user_input.get("switches_include", []),
                 "scenes_map": user_input.get("scenes_map", {}),
-            })
-
-            # Create a brand new entry with YAML content
-            return self.async_create_entry(
-                title="Centralite",
-                data={
-                    "port": chosen,
-                    "include_switches": user_input.get("include_switches", False),
-                    "exclude_names": user_input.get("exclude_names", []),
-                    "loads_include": user_input.get("loads_include", []),
-                    "switches_include": user_input.get("switches_include", []),
-                    "scenes_map": user_input.get("scenes_map", {}),
-                },
-            )
+            },
+        )
 # Step 1: choose port (live scan) or manual
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
@@ -277,12 +278,13 @@ class CentraliteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         note = f"Duplicate scene number(s): {dupe_list}. No free number available in 1..256."
                     errors["base"] = "duplicate_scene_ids"
                 else:
-                    data = {
-                        **getattr(self, "_base", {}),
-                        **getattr(self, "_devices", {}),
-                        "scenes_map": scenes,
-                    }
-                    return self.async_create_entry(title="Centralite", data=data)
+                    base = getattr(self, "_base", {})
+                    devices = getattr(self, "_devices", {})
+                    return self.async_create_entry(
+                        title="Centralite",
+                        data=base,
+                        options={**devices, "scenes_map": scenes},
+                    )
 
         # Show form (we surface the human-readable note inside a separate field label)
         default_text = user_input.get("scenes_map", "") if user_input else ""
