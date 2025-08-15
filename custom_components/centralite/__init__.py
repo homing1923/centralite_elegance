@@ -27,7 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     if moved:
         hass.config_entries.async_update_entry(entry, data=data, options=opts)
 
-    hub = CentraliteHub(hass, {**entry.data, **entry.options})
+    hub = CentraliteHub(hass, _merged(entry))
     await hub.async_setup()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = hub

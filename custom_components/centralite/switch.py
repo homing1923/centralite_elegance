@@ -34,8 +34,8 @@ async def _maybe_migrate_switch_unique_ids(hass: HomeAssistant, entry: ConfigEnt
         if ent.config_entry_id != entry.entry_id or ent.platform != DOMAIN:
             continue
 
-        # 1) Legacy elegance.* → new padded
-        m = re.fullmatch(r"elegance\.SW(\d+)", ent.unique_id)
+        # Legacy elegance.* → padded
+        m = re.fullmatch(r"elegance\.SW0*(\d+)", ent.unique_id)
         if m:
             sw = int(m.group(1))
             new_uid = f"{entry.entry_id}.switch.SW{sw:03d}"
@@ -43,13 +43,14 @@ async def _maybe_migrate_switch_unique_ids(hass: HomeAssistant, entry: ConfigEnt
                 reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
             continue
 
-        # 2) Interim new (un-padded) → padded
-        m = re.fullmatch(rf"{re.escape(entry.entry_id)}\.switch\.SW(\d+)", ent.unique_id)
+        # Interim new (un-padded) → padded
+        m = re.fullmatch(rf"{re.escape(entry.entry_id)}\.switch\.SW0*(\d+)", ent.unique_id)
         if m:
             sw = int(m.group(1))
             new_uid = f"{entry.entry_id}.switch.SW{sw:03d}"
             if ent.unique_id != new_uid:
                 reg.async_update_entity(ent.entity_id, new_unique_id=new_uid)
+
 
 
 
@@ -63,7 +64,10 @@ async def async_setup_entry(
     await _maybe_migrate_switch_unique_ids(hass, entry)
 
     if not hub.include_switches:
-        _LOGGER.debug("centralite.switch: include_switches is False; skipping")
+        _LOGGER.warning(
+            "centralite.switch: include_switches is False; skipping creation. "
+            "Enable it in Settings → Devices & Services → Centralite → Configure."
+        )
         return
 
     all_ids = ctrl.button_switches()
