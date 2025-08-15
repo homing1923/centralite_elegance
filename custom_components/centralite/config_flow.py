@@ -8,6 +8,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers.selector import selector
+from homeassistant import config_entries
 
 from . import DOMAIN
 
@@ -126,7 +127,35 @@ async def _probe_port(hass, port: str) -> str | None:
 class CentraliteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
-    # Step 1: choose port (live scan) or manual
+    async def async_step_import(self, user_input):
+            # user_input is the dict from YAML (e.g., {"port": "...", "loads_include": [...], ...})
+            chosen = str(user_input["port"]).strip()
+            unique_id = f"serial://{chosen}".lower()
+            await self.async_set_unique_id(unique_id)
+
+            # Reuse/update existing entry if it already exists
+            self._abort_if_unique_id_configured(updates={
+                "port": chosen,
+                "include_switches": user_input.get("include_switches", False),
+                "exclude_names": user_input.get("exclude_names", []),
+                # Put lists/maps into entry.data now, or move to entry.options later
+                "loads_include": user_input.get("loads_include", []),
+                "switches_include": user_input.get("switches_include", []),
+                "scenes_map": user_input.get("scenes_map", {}),
+            })
+
+            # Create a brand new entry with YAML content
+            return self.async_create_entry(
+                title="Centralite",
+                data={
+                    "port": chosen,
+                    "include_switches": user_input.get("include_switches", False),
+                    "exclude_names": user_input.get("exclude_names", []),
+                    "loads_include": user_input.get("loads_include", []),
+                    "switches_include": user_input.get("switches_include", []),
+                    "scenes_map": user_input.get("scenes_map", {}),
+                },
+            )
 # Step 1: choose port (live scan) or manual
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:

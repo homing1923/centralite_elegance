@@ -23,14 +23,16 @@ class CentraliteHub:
         self.scenes_map: dict[str, str] = cfg.get("scenes_map") or {}
         self.controller: Centralite | None = None
 
-    async def async_setup(self):
-        def _start():
-            self.controller = Centralite(self.url)
-
-        try:
-            await self.hass.async_add_executor_job(_start)
-        except (serialutil.SerialException, OSError) as e:
-            raise ConfigEntryNotReady(f"Serial port not ready: {e}") from e
+    async def async_setup(hass, config):
+        yaml_cfg = config.get(DOMAIN)
+        if yaml_cfg:
+            # Kick off an IMPORT flow so we capture YAML values once
+            hass.async_create_task(
+                hass.config_entries.flow.async_init(
+                    DOMAIN, context={"source": "import"}, data=yaml_cfg
+                )
+            )
+        return True
 
     async def async_close(self):
         if self.controller:
