@@ -2,7 +2,6 @@ import logging
 from homeassistant.config_entries import ConfigEntry, ConfigEntryNotReady
 from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform
-from .const import DOMAIN, PLATFORMS
 from .hub import CentraliteHub
 from serial import serialutil
 from .pycentralite import Centralite
